@@ -8,13 +8,15 @@ import statistics
 from waffles.input_output.hdf5_structured import load_structured_waveformset
 import waffles.plotting.drawing_tools as draw
 
+# Uses long wfms (typically 100us) in beam trig runs, use pre-beamtrig region to count
+
 # cathode channels
-#channelsofinterest = [32, 31, 34, 36, 2, 1, 5, 4]
+channelsofinterest = [32, 31, 34, 36, 2, 1, 5, 4]
 # membrane channels: M1-M4 very noisy, shouldn't trust noise count
-channelsofinterest = [45, 42, 44, 41, 0, 20, 30, 10]
+#channelsofinterest = [45, 42, 44, 41, 0, 20, 30, 10]
 filterlength = 10
 percentile4baseline = 10
-plotwfms = True
+plotwfms = False
 nadcthrs = 8 # number of ADC thresholds
 
 #countupcross = np.zeros((8,), dtype=np.int32)
@@ -146,8 +148,11 @@ for ich in range(len(channelsofinterest)):
 # July 10, cathode HV @ 154 kV, ONLY membrane PD modules ON
 #filepath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run037212_membrane/processed_merged_run037212_structured_membrane.hdf5"
 #filepath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run037213_membrane/processed_merged_run037213_structured_membrane.hdf5"
+# July 13, beam run 12 GeV cathode 100 us wfm, all PD on, look at pretrig region before 1700 ticks
+filepath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run037248_cathode/processed_np02vd_raw_run037248_0000_df-s05-d0_dw_0_20250713T084736.hdf5.copied_structured_cathode.hdf5"
+prebeamtrigtick = 1700
 # July 14, cathode + membrane PD on, random trig, TPC @154 kV
-filepath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run037251_membrane/processed_merged_run037251_structured_membrane.hdf5"
+#filepath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run037251_membrane/processed_merged_run037251_structured_membrane.hdf5"
 #filepath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run037251_cathode/processed_merged_run037251_structured_cathode.hdf5"
 
 # Cosmic trigger
@@ -168,9 +173,9 @@ print("1st wfm channel: ", wfset.waveforms[0].channel)
 
 BaselineADCAllWfms = []
 
-#for iwfm in range(len(wfset.waveforms)):
-for iwfm in range(20000):
-        # TCO side lower XA closer to cathode, VD style DVDC-DVDM
+for iwfm in range(len(wfset.waveforms)):
+#for iwfm in range(1000):
+
         if iwfm % 10000 == 0:
             print(iwfm)
 
@@ -193,9 +198,10 @@ for iwfm in range(20000):
                 BaselineADCAllWfms.append(baseline_ADC)
 
                 # Loop over points in the waveform
-                for itick in range(len(wfset.waveforms[iwfm].filtered)):
+                #for itick in range(len(wfset.waveforms[iwfm].filtered)):
+                for itick in range(prebeamtrigtick):
 
-                    if itick < (len(wfset.waveforms[0].adcs) - filterlength): # max ticks
+                    if itick < prebeamtrigtick - 1: # max ticks
                         # Count up-crossings in each waveform
                         for ithres in range(nadcthrs):
                             if( ( wfset.waveforms[iwfm].filtered[itick] - (baseline_ADC+delta_ADC[ich][ithres]) )<0 and ( wfset.waveforms[iwfm].filtered[itick+1] - (baseline_ADC+delta_ADC[ich][ithres]) )>0 ):
@@ -227,7 +233,7 @@ for ich in range(len(channelsofinterest)):
     #    print("Counts at delta ADC ", delta_ADC[ich][ithres], ": ", countupcross[ich][ithres])
 
     for ithres in range(nadcthrs):
-        print("Counts/10us at delta ADC ", delta_ADC[ich][ithres], ": ", round(countupcross[ich][ithres]*10000/(countwfms[ich]*(len(wfset.waveforms[0].adcs)*16)), 2) )
+        print("Counts/10us at delta ADC ", delta_ADC[ich][ithres], ": ", round(countupcross[ich][ithres]*10000/(countwfms[ich]*(prebeamtrigtick*16)), 2) )
 
     Baselines_allwfms = [(x) for x in BaselineADCAllWfms]
     plt.hist(Baselines_allwfms, range=(0,10000), bins=1000)
