@@ -4,19 +4,25 @@ from pathlib import Path
 import numpy as np
 import matplotlib.pyplot as plt
 import statistics
+from scipy import signal
+import scipy.linalg
+from scipy.optimize import curve_fit
 
 from waffles.input_output.hdf5_structured import load_structured_waveformset
 import waffles.plotting.drawing_tools as draw
 
+#import ROOT
+#from ROOT import gROOT # for creating the output file
+
 # cathode channels
 #channelsofinterest = [32, 31, 34, 36, 2, 1, 5, 4]
 # membrane channels: M1-M4 very noisy, shouldn't trust noise count
-channelsofinterest = [45, 42, 44, 41, 0, 20, 30, 10]
-#channelsofinterest = [20, 30] # if quartz window is M7 (30)
+#channelsofinterest = [45, 42, 44, 41, 0, 20, 30, 10]
+channelsofinterest = [20, 30] # if quartz window is M7 (30)
 #channelsofinterest = [0, 10] # if quartz window is M8 (10)
 #channelsofinterest = [45, 42, 44, 41] # HD style HPK
 
-avf_wfm_max_tick = 800
+avf_wfm_max_tick = 1014
 # beam run
 #wfm_peak_adc_low = 3500
 #wfm_peak_adc_high = 4000
@@ -34,8 +40,19 @@ avf_wfm_max_tick = 800
 
 filterlength = 10
 percentile4baseline = 10
-plotwfms = True
+plotwfms = False
+Beamrun = True
 nadcthrs = 8 # number of ADC thresholds
+
+# typical LAr two exponentials
+def LightSrcTProfile(t, Af, tauf, As, taus):
+    #print("entering func LightSrcTProfile")
+    #print("type t: ", type(t))
+    #print("type Af: ", type(Af))
+    #print("type tauf: ", type(tauf))
+    #print("type As: ", type(As))
+    #print("type taus: ", type(taus))
+    return Af * np.exp(-1.0*t/tauf) + As * np.exp(-1.0*t/taus)
 
 avg_wfm = np.zeros((len(channelsofinterest),avf_wfm_max_tick), dtype=np.float32)
 countwfms = np.zeros((len(channelsofinterest),), dtype=np.int32)
@@ -172,12 +189,16 @@ for ich in range(len(channelsofinterest)):
 #filepath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run037212_membrane/processed_merged_run037212_structured_membrane.hdf5"
 #filepath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run037213_membrane/processed_merged_run037213_structured_membrane.hdf5"
 # July 10: first beam run +12 GeV
-#filepath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run037218_membrane/processed_merged_run037218_structured_membrane.hdf5"
+filepath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run037218_membrane/processed_merged_run037218_structured_membrane.hdf5"
 #filepath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run037218_cathode/processed_merged_run037218_structured_cathode.hdf5"
 # July 13: beam trig +5 GeV
 #filepath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run037249_membrane/processed_np02vd_raw_run037249_0000_df-s05-d0_dw_0_20250713T094009.hdf5.copied_structured_membrane.hdf5"
 # July 14: beam run +2 GeV
-filepath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run037260_membrane/processed_np02vd_raw_run037260_0000_df-s05-d0_dw_0_20250714T164808.hdf5.copied_structured_membrane.hdf5"
+#filepath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run037260_membrane/processed_np02vd_raw_run037260_0000_df-s05-d0_dw_0_20250714T164808.hdf5.copied_structured_membrane.hdf5"
+# July 15: beam +5 GeV, cathode full stream, + memb, Beam low cherenkov 2.3 bar (normal should be 4 bar), high cherenkov 14 bar
+#filepath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run037275_membrane/processed_np02vd_raw_run037275_0000_df-s05-d0_dw_0_20250715T154533.hdf5.copied_structured_membrane.hdf5"
+# July 15: beam +5 GeV, NO cathode PDS, membrane PD only, Beam low cherenkov 2.3 bar (normal should be 4 bar), high cherenkov 14 bar
+#filepath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run037276_membrane/processed_np02vd_raw_run037276_0000_df-s05-d0_dw_0_20250715T190106.hdf5.copied_structured_membrane.hdf5"
 
 # Cosmic trigger
 # /pnfs/dune/persistent/users/weishi/PDVDNoiseHunt/processed_np02vd_raw_run036401_0000_df-s04-d0_dw_0_20250512T122851.hdf5.copied_structured.hdf5
@@ -206,15 +227,18 @@ for ich in range(len(channelsofinterest)):
 
 # overlay raw adc waveforms from same trigger event based on daq time
 daq_trigger_time = []
+count_overlay_plot = 0
 for iwfm in range(len(wfset.waveforms)):
-    # get the daq time stamp every 100 wfms
-    if iwfm > 1500: break
-    if iwfm % 100 == 0:
+    # get the daq time stamp
+    if count_overlay_plot > 15: break
+    if wfset.waveforms[iwfm].channel == 30 and abs(wfset.waveforms[iwfm].daq_window_timestamp - wfset.waveforms[iwfm].timestamp) < 10:
         # this is the list of events we want to check all channels' wfms together
         daq_trigger_time.append(wfset.waveforms[iwfm].daq_window_timestamp)
+        count_overlay_plot = count_overlay_plot +1
 
 # Main loop
 for iwfm in range(len(wfset.waveforms)):
+#for iwfm in range(10000):
     #if iwfm< 300: print("wfm #: ", iwfm, ", ch: ", wfset.waveforms[0].channel, ", DAQ time: ", wfset.waveforms[iwfm].daq_window_timestamp, ", PD time: ", wfset.waveforms[iwfm].timestamp, ", dt: ", abs(wfset.waveforms[iwfm].daq_window_timestamp - wfset.waveforms[iwfm].timestamp))
 
         if iwfm % 10000 == 0:
@@ -239,7 +263,7 @@ for iwfm in range(len(wfset.waveforms)):
 
 
                 # For membrane modules: requiring PD time stamp and DAQ time stamp within certain range (channel dependent) to make sure it's selecting beam event
-                if abs(wfset.waveforms[iwfm].daq_window_timestamp - wfset.waveforms[iwfm].timestamp) < 10:
+                if (Beamrun == True and abs(wfset.waveforms[iwfm].daq_window_timestamp - wfset.waveforms[iwfm].timestamp) < 10) or Beamrun == False:
 
                     # find baseline of the wfm
                     baseline_ADC = 0
@@ -320,21 +344,75 @@ print("================= Avg Wfm Report =================  ")
 for ich in range(len(channelsofinterest)):
     print("==== module ", modules[channelsofinterest[ich]], " (ch ", channelsofinterest[ich], ") ==== ")
     print("tot wfms for avg: ", countwfms[ich])
-
     # loop over ticks
     for itick in range(avf_wfm_max_tick):
         avg_wfm[ich][itick] = avg_wfm[ich][itick]*1.0 / countwfms[ich]
 
-        # store SPE template in txt
-        with open("SPE_template_ch_"+str(channelsofinterest[ich])+".txt", "a") as f:
+
+# subtract basline of avg wfm for deconvolve
+for ich in range(len(channelsofinterest)):
+
+    with open(str(wfset.runs)+"_ch_"+str(channelsofinterest[ich])+"_AVG_wfm_filtered.txt", "w") as f:
+
+        # subtract basline of avg wfm for deconvolve
+        baseline_ADC_avg_wfm = statistics.mean(filter(lambda x: x <= np.percentile(avg_wfm[ich], percentile4baseline), avg_wfm[ich]))
+        print("ch", channelsofinterest[ich], " avg wfm baseline: ", baseline_ADC_avg_wfm)
+        for itick in range(avf_wfm_max_tick):
+            avg_wfm[ich][itick] = avg_wfm[ich][itick] - baseline_ADC_avg_wfm
+            # store avg wfm in txt
             f.write(str(avg_wfm[ich][itick])+ "\n")
 
-with open("SPE_template_ch_"+str(channelsofinterest[ich])+".txt") as r:
-    print(r.read())
-
-for ich in range(len(channelsofinterest)):
+    # plot avg wfm
     xaxis = [x for x in range(len(avg_wfm[ich]))]
     plt.plot(xaxis, avg_wfm[ich])
     plt.savefig("./"+str(wfset.runs)+"_ch_"+str(channelsofinterest[ich])+"_AVG_wfm_filtered.pdf")
+    plt.clf() # important to clear figure
+    plt.close()
+
+    #################
+    # Deconvolution
+    #################
+    spe_response = np.loadtxt("ch"+str(channelsofinterest[ich])+"_avg_spe_waveform.txt", usecols=0)
+    #source, remainder = signal.deconvolve(avg_wfm[ich], spe_response)
+    # here the deconvolution doe
+    #A = scipy.linalg.convolution_matrix(spe_response, len(avg_wfm[ich]), 'same')
+    A = scipy.linalg.convolution_matrix(spe_response, len(avg_wfm[ich])+1-len(spe_response)) # default full mode
+    source, _, _, _ = scipy.linalg.lstsq(A, avg_wfm[ich])
+
+    # plot source
+    xaxis = [x for x in range(len(source))]
+    plt.plot(xaxis, source)
+    plt.savefig("./"+str(wfset.runs)+"_ch_"+str(channelsofinterest[ich])+"_light_source.pdf")
+    plt.clf() # important to clear figure
+    plt.close()
+
+    # smooth the deconvolved source
+    source_filtered = np.convolve(source, np.ones(filterlength), 'valid') / filterlength
+    print("ch", channelsofinterest[ich], " source filtered: ", source_filtered)
+    with open(str(wfset.runs)+"_ch_"+str(channelsofinterest[ich])+"_light_source_smoothed.txt", "w") as f:
+        # loop over ticks
+        for itick in range(len(source_filtered)):
+            # store avg wfm in txt
+            f.write(str(source_filtered[itick])+ "\n")
+
+    #####################################################
+    # Fit with standard two exponentials
+    #####################################################
+    xaxis = [x for x in range(len(source_filtered))]
+    print("xaxis:", xaxis)
+    xaxis_fit = xaxis[13:]
+    source_filtered_fit = source_filtered[13:]
+    popt, pcov = curve_fit(LightSrcTProfile, np.array(xaxis_fit), source_filtered_fit, p0=(0.5,20.0,0.2,300.0))
+    Af   = popt[0]
+    tauf = popt[1]
+    As   = popt[2]
+    taus = popt[3]
+    fitresult = LightSrcTProfile(np.array(xaxis_fit), Af, tauf, As, taus)
+
+    # plot filtered source
+    plt.plot(xaxis, source_filtered, label=str(modules[channelsofinterest[ich]])+': run'+str(wfset.runs))
+    plt.plot(xaxis_fit, fitresult, 'red', label=f'Fit func = Af * exp(-t/tauf) + As * exp(-t/taus):\n Af={Af:.2f}, tauf={tauf:.1f} [x 16ns], As={As:.2f}, taus={taus:.1f} [x 16ns]')
+    plt.legend()
+    plt.savefig("./"+str(wfset.runs)+"_ch_"+str(channelsofinterest[ich])+"_light_source_smoothed_withfit.pdf")
     plt.clf() # important to clear figure
     plt.close()

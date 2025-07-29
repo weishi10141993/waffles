@@ -149,10 +149,17 @@ for ich in range(len(channelsofinterest)):
 #filepath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run037212_membrane/processed_merged_run037212_structured_membrane.hdf5"
 #filepath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run037213_membrane/processed_merged_run037213_structured_membrane.hdf5"
 # July 13, beam run 12 GeV cathode 100 us wfm, all PD on
-filepath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run037248_cathode/processed_np02vd_raw_run037248_0000_df-s05-d0_dw_0_20250713T084736.hdf5.copied_structured_cathode.hdf5"
+#filepath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run037248_cathode/processed_np02vd_raw_run037248_0000_df-s05-d0_dw_0_20250713T084736.hdf5.copied_structured_cathode.hdf5"
 # July 14, cathode + membrane PD on, random trig, TPC @154 kV
 #filepath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run037251_membrane/processed_merged_run037251_structured_membrane.hdf5"
 #filepath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run037251_cathode/processed_merged_run037251_structured_cathode.hdf5"
+# July 22, cathode+memb, TPC@154kV, random trig, 3 runs
+#filepath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run037978_membrane/processed_np02vd_raw_run037978_0000_df-s04-d0_dw_0_20250722T105844.hdf5.copied_structured_membrane.hdf5"
+#filepath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run037978_cathode/processed_np02vd_raw_run037978_0000_df-s04-d0_dw_0_20250722T105844.hdf5.copied_structured_cathode.hdf5"
+#filepath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run037979_membrane/processed_np02vd_raw_run037979_0000_df-s04-d0_dw_0_20250722T110224.hdf5.copied_structured_membrane.hdf5"
+#filepath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run037979_cathode/processed_np02vd_raw_run037979_0000_df-s04-d0_dw_0_20250722T110224.hdf5.copied_structured_cathode.hdf5"
+filepath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run037980_cathode/processed_np02vd_raw_run037980_0000_df-s04-d0_dw_0_20250722T110552.hdf5.copied_structured_cathode.hdf5"
+#filepath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run037980_membrane/processed_np02vd_raw_run037980_0000_df-s04-d0_dw_0_20250722T110552.hdf5.copied_structured_membrane.hdf5"
 
 # Cosmic trigger
 # /pnfs/dune/persistent/users/weishi/PDVDNoiseHunt/processed_np02vd_raw_run036401_0000_df-s04-d0_dw_0_20250512T122851.hdf5.copied_structured.hdf5
@@ -173,7 +180,8 @@ print("1st wfm channel: ", wfset.waveforms[0].channel)
 BaselineADCAllWfms = []
 
 #for iwfm in range(len(wfset.waveforms)):
-for iwfm in range(300):
+for iwfm in range(100000):
+#for iwfm in range(400):
         # TCO side lower XA closer to cathode, VD style DVDC-DVDM
         if iwfm % 10000 == 0:
             print(iwfm)
@@ -205,10 +213,11 @@ for iwfm in range(300):
                             if( ( wfset.waveforms[iwfm].filtered[itick] - (baseline_ADC+delta_ADC[ich][ithres]) )<0 and ( wfset.waveforms[iwfm].filtered[itick+1] - (baseline_ADC+delta_ADC[ich][ithres]) )>0 ):
                                 countupcross[ich][ithres] += 1
 
-                if iwfm < 300 and plotwfms == True:
+                if iwfm < 400 and plotwfms == True:
                     # plot the wfm individually
                     xaxis = [x for x in range(len(wfset.waveforms[iwfm].adcs))]
                     plt.plot(xaxis, wfset.waveforms[iwfm].adcs)
+                    #plt.xlim(0, 400) # Set x-axis
                     plt.savefig("plots/"+str(wfset.runs)+"_ch_"+str(channelofinterest)+"wfm_"+str(iwfm)+"_adcs.pdf")
                     plt.clf() # important to clear figure
                     plt.close()
