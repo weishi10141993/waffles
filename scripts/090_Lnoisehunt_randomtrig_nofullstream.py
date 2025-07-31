@@ -152,13 +152,13 @@ for ich in range(len(channelsofinterest)):
 #filepath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run037248_cathode/processed_np02vd_raw_run037248_0000_df-s05-d0_dw_0_20250713T084736.hdf5.copied_structured_cathode.hdf5"
 # July 14, cathode + membrane PD on, random trig, TPC @154 kV
 #filepath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run037251_membrane/processed_merged_run037251_structured_membrane.hdf5"
-#filepath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run037251_cathode/processed_merged_run037251_structured_cathode.hdf5"
+filepath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run037251_cathode/processed_merged_run037251_structured_cathode.hdf5"
 # July 22, cathode+memb, TPC@154kV, random trig, 3 runs
 #filepath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run037978_membrane/processed_np02vd_raw_run037978_0000_df-s04-d0_dw_0_20250722T105844.hdf5.copied_structured_membrane.hdf5"
 #filepath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run037978_cathode/processed_np02vd_raw_run037978_0000_df-s04-d0_dw_0_20250722T105844.hdf5.copied_structured_cathode.hdf5"
 #filepath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run037979_membrane/processed_np02vd_raw_run037979_0000_df-s04-d0_dw_0_20250722T110224.hdf5.copied_structured_membrane.hdf5"
 #filepath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run037979_cathode/processed_np02vd_raw_run037979_0000_df-s04-d0_dw_0_20250722T110224.hdf5.copied_structured_cathode.hdf5"
-filepath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run037980_cathode/processed_np02vd_raw_run037980_0000_df-s04-d0_dw_0_20250722T110552.hdf5.copied_structured_cathode.hdf5"
+#filepath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run037980_cathode/processed_np02vd_raw_run037980_0000_df-s04-d0_dw_0_20250722T110552.hdf5.copied_structured_cathode.hdf5"
 #filepath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run037980_membrane/processed_np02vd_raw_run037980_0000_df-s04-d0_dw_0_20250722T110552.hdf5.copied_structured_membrane.hdf5"
 
 # Cosmic trigger

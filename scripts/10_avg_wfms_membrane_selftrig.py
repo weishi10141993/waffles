@@ -7,6 +7,8 @@ import statistics
 from scipy import signal
 import scipy.linalg
 from scipy.optimize import curve_fit
+from scipy.signal import butter, sosfiltfilt
+from scipy.ndimage import gaussian_filter1d
 
 from waffles.input_output.hdf5_structured import load_structured_waveformset
 import waffles.plotting.drawing_tools as draw
@@ -42,6 +44,13 @@ filterlength = 10
 percentile4baseline = 10
 plotwfms = False
 Beamrun = True
+SPETemplateHighPassFilter = False
+AvgWfmHighPassFilter = False
+SPETemplateGaussFilter = False
+AvgWfmGaussFilter = False
+
+SPETemplateMovingAvg = False
+
 nadcthrs = 8 # number of ADC thresholds
 
 # typical LAr two exponentials
@@ -305,7 +314,7 @@ for iwfm in range(len(wfset.waveforms)):
                         xaxis = [x for x in range(len(wfset.waveforms[iwfm].filtered))]
                         plt.plot(xaxis, wfset.waveforms[iwfm].filtered)
                         plt.hlines(y=[baseline_ADC], xmin=0, xmax=len(wfset.waveforms[0].adcs), colors=['r'], linestyles=['--']) # also plot the calculated baseline in red for each wfm
-                        plt.savefig("plots/"+str(wfset.runs)+"_ch_"+str(channelofinterest)+"wfm_"+str(iwfm)+"_filtered.pdf")
+                        plt.savefig("plots/"+str(wfset.runs)+"_ch_"+str(channelofinterest)+"wfm_"+str(iwfm)+"_movingavged.pdf")
                         plt.clf() # important to clear figure
                         plt.close()
 
@@ -352,7 +361,7 @@ for ich in range(len(channelsofinterest)):
 # subtract basline of avg wfm for deconvolve
 for ich in range(len(channelsofinterest)):
 
-    with open(str(wfset.runs)+"_ch_"+str(channelsofinterest[ich])+"_AVG_wfm_filtered.txt", "w") as f:
+    with open(str(wfset.runs)+"_ch_"+str(channelsofinterest[ich])+"_AVG_wfm.txt", "w") as f:
 
         # subtract basline of avg wfm for deconvolve
         baseline_ADC_avg_wfm = statistics.mean(filter(lambda x: x <= np.percentile(avg_wfm[ich], percentile4baseline), avg_wfm[ich]))
@@ -362,24 +371,142 @@ for ich in range(len(channelsofinterest)):
             # store avg wfm in txt
             f.write(str(avg_wfm[ich][itick])+ "\n")
 
-    # plot avg wfm
+    #####################################
+    # common setting for high pass filter
+    #####################################
+
+    cutoff_frequency = 100000 # Hz
+    order = 1
+    sampling_rate = 62500000 # 16ns
+
+    ###########################################
+    # common setting for Gaussian kernel filter
+    ###########################################
+
+    sigma = 2 # larger sigma results in more smoothing.
+
+    ###########################
+    # Avg wfm further make up
+    ###########################
+    ### add the same high pass filter as the SPE template ###
+    # only filter this tick and after
+    if Beamrun == True:
+        highpassfilter_start_avg_wfm = 64
+    else:
+        highpassfilter_start_avg_wfm = 240
+    sos_avg_wfm = butter(order, cutoff_frequency, 'highpass', fs=sampling_rate, output='sos')
+    avg_wfm_segment_to_high_pass = avg_wfm[ich][highpassfilter_start_avg_wfm:]
+    avg_wfm_segment_high_pass_filtered = sosfiltfilt(sos_avg_wfm, avg_wfm_segment_to_high_pass)
+    # stitch back filtered and not filtered segments
+    avg_wfm_high_pass_filtered = np.copy(avg_wfm[ich])
+    avg_wfm_high_pass_filtered[highpassfilter_start_avg_wfm:] = avg_wfm_segment_high_pass_filtered
+    # and write to txt file
+    with open("ch_"+str(channelsofinterest[ich])+"_AVG_wfm_highpassfiltered"+str(cutoff_frequency)+"Hz.txt", "w") as f:
+        # loop over ticks
+        for itick in range(len(avg_wfm_high_pass_filtered)):
+            # store avg wfm in txt
+            f.write(str(avg_wfm_high_pass_filtered[itick])+ "\n")
+
+    ### apply Gaussian filter to avg wfm ###
+    avg_wfm_Gauss_filtered = gaussian_filter1d(avg_wfm[ich], sigma=sigma)
+    # and write to txt file
+    with open("ch_"+str(channelsofinterest[ich])+"_AVG_wfm_gaussfiltered.txt", "w") as f:
+        # loop over ticks
+        for itick in range(len(avg_wfm_Gauss_filtered)):
+            # store avg wfm in txt
+            f.write(str(avg_wfm_Gauss_filtered[itick])+ "\n")
+
+    # plot avg wfm and different makeups
     xaxis = [x for x in range(len(avg_wfm[ich]))]
-    plt.plot(xaxis, avg_wfm[ich])
-    plt.savefig("./"+str(wfset.runs)+"_ch_"+str(channelsofinterest[ich])+"_AVG_wfm_filtered.pdf")
+    xaxis_highpassfiltered = [x for x in range(len(avg_wfm_high_pass_filtered))]
+    xaxis_gaussfiltered = [x for x in range(len(avg_wfm_Gauss_filtered))]
+    plt.plot(xaxis, avg_wfm[ich], 'blue', label=str(modules[channelsofinterest[ich]]))
+    plt.plot(xaxis_highpassfiltered, avg_wfm_high_pass_filtered, 'red', label=str(modules[channelsofinterest[ich]])+'- High pass filter: '+str(cutoff_frequency)+'Hz')
+    plt.plot(xaxis_gaussfiltered, avg_wfm_Gauss_filtered, 'green', label=str(modules[channelsofinterest[ich]])+'- Gauss filter')
+    plt.grid(True)
+    plt.legend()
+    plt.savefig("./"+str(wfset.runs)+"_ch_"+str(channelsofinterest[ich])+"_AVG_wfm_makeups.pdf")
+    plt.clf() # important to clear figure
+    plt.close()
+
+    ###########################
+    # SPE template make up
+    ###########################
+    spe_response = np.loadtxt("ch"+str(channelsofinterest[ich])+"_avg_spe_waveform.txt", usecols=0)
+
+    ### add a high pass filter to reduce the overshoot at the tail ###
+    filter_start = 45 # only filter this tick and after
+    sos = butter(order, cutoff_frequency, 'highpass', fs=sampling_rate, output='sos')
+    spe_segment_to_filter = spe_response[filter_start:]
+    spe_segment_filtered = sosfiltfilt(sos, spe_segment_to_filter)
+    # stitch back filtered and not filtered segments
+    spe_response_high_pass_filtered = np.copy(spe_response)
+    spe_response_high_pass_filtered[filter_start:] = spe_segment_filtered
+    # and write to txt file
+    with open("ch_"+str(channelsofinterest[ich])+"_LED_spe_template_highpassfiltered"+str(cutoff_frequency)+"Hz.txt", "w") as f:
+        # loop over ticks
+        for itick in range(len(spe_response_high_pass_filtered)):
+            # store avg wfm in txt
+            f.write(str(spe_response_high_pass_filtered[itick])+ "\n")
+
+    ### moving average to smooth the template ###
+    spe_response_movingavg = np.convolve(spe_response, np.ones(filterlength), 'valid') / filterlength
+    # and write to txt file
+    with open("ch_"+str(channelsofinterest[ich])+"_LED_spe_template_movingavg"+str(filterlength)+"ticks.txt", "w") as f:
+        # loop over ticks
+        for itick in range(len(spe_response_movingavg)):
+            # store avg wfm in txt
+            f.write(str(spe_response_movingavg[itick])+ "\n")
+
+    ### apply Gaussian filter to SPE template ###
+    spe_response_gaussfilterd = gaussian_filter1d(spe_response, sigma=sigma)
+    # and write to txt file
+    with open("ch_"+str(channelsofinterest[ich])+"_LED_spe_template_gaussfiltered.txt", "w") as f:
+        # loop over ticks
+        for itick in range(len(spe_response_gaussfilterd)):
+            # store avg wfm in txt
+            f.write(str(spe_response_gaussfilterd[itick])+ "\n")
+
+    # plot different spe template make up
+    xaxis = [x for x in range(len(spe_response))]
+    xaxis_highpassfiltered = [x for x in range(len(spe_response_high_pass_filtered))]
+    xaxis_movingavg = [x for x in range(len(spe_response_movingavg))]
+    xaxis_gaussfiltered = [x for x in range(len(spe_response_gaussfilterd))]
+    plt.plot(xaxis, spe_response, 'blue', label=str(modules[channelsofinterest[ich]])+' - From Kaixin')
+    plt.plot(xaxis_highpassfiltered, spe_response_high_pass_filtered, 'red', label=str(modules[channelsofinterest[ich]])+'- High pass filter: '+str(cutoff_frequency)+'Hz')
+    plt.plot(xaxis_movingavg, spe_response_movingavg, 'green', label=str(modules[channelsofinterest[ich]])+'- Moving average')
+    plt.plot(xaxis_gaussfiltered, spe_response_gaussfilterd, 'cyan', label=str(modules[channelsofinterest[ich]])+'- Gauss filter')
+    plt.grid(True)
+    plt.legend()
+    plt.savefig("./ch_"+str(channelsofinterest[ich])+"_LED_spe_template_makeup.pdf")
     plt.clf() # important to clear figure
     plt.close()
 
     #################
     # Deconvolution
     #################
-    spe_response = np.loadtxt("ch"+str(channelsofinterest[ich])+"_avg_spe_waveform.txt", usecols=0)
-    #source, remainder = signal.deconvolve(avg_wfm[ich], spe_response)
-    # here the deconvolution doe
-    #A = scipy.linalg.convolution_matrix(spe_response, len(avg_wfm[ich]), 'same')
-    A = scipy.linalg.convolution_matrix(spe_response, len(avg_wfm[ich])+1-len(spe_response)) # default full mode
-    source, _, _, _ = scipy.linalg.lstsq(A, avg_wfm[ich])
+    if SPETemplateHighPassFilter == True:
+        spe_template_final = spe_response_high_pass_filtered
+    elif SPETemplateMovingAvg == True:
+        spe_template_final = spe_response_movingavg
+    elif SPETemplateGaussFilter == True:
+        spe_template_final = spe_response_gaussfilterd
+    else:
+        spe_template_final = spe_response
 
-    # plot source
+    if AvgWfmHighPassFilter == True:
+        avg_wfm_final = avg_wfm_high_pass_filtered
+    elif AvgWfmGaussFilter == True:
+        avg_wfm_final = avg_wfm_Gauss_filtered
+    else:
+        avg_wfm_final = avg_wfm[ich]
+    #source, remainder = signal.deconvolve(avg_wfm[ich], spe_response)
+    # here the deconvolution
+    #A = scipy.linalg.convolution_matrix(spe_response, len(avg_wfm[ich]), 'same')
+    A = scipy.linalg.convolution_matrix(spe_template_final, len(avg_wfm_final)+1-len(spe_template_final)) # default full mode
+    source, _, _, _ = scipy.linalg.lstsq(A, avg_wfm_final)
+
+    # plot deconvolved source
     xaxis = [x for x in range(len(source))]
     plt.plot(xaxis, source)
     plt.savefig("./"+str(wfset.runs)+"_ch_"+str(channelsofinterest[ich])+"_light_source.pdf")
@@ -400,8 +527,9 @@ for ich in range(len(channelsofinterest)):
     #####################################################
     xaxis = [x for x in range(len(source_filtered))]
     print("xaxis:", xaxis)
-    xaxis_fit = xaxis[13:]
-    source_filtered_fit = source_filtered[13:]
+    fit_start_tick = 14
+    xaxis_fit = xaxis[fit_start_tick:]
+    source_filtered_fit = source_filtered[fit_start_tick:]
     popt, pcov = curve_fit(LightSrcTProfile, np.array(xaxis_fit), source_filtered_fit, p0=(0.5,20.0,0.2,300.0))
     Af   = popt[0]
     tauf = popt[1]
