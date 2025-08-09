@@ -9,9 +9,14 @@ import scipy.linalg
 from scipy.optimize import curve_fit
 from scipy.signal import butter, sosfiltfilt
 from scipy.ndimage import gaussian_filter1d
+import glob
+import os
 
 from waffles.input_output.hdf5_structured import load_structured_waveformset
 import waffles.plotting.drawing_tools as draw
+
+from waffles.data_classes.WaveformSet import WaveformSet
+from waffles.data_classes.Waveform import Waveform
 
 #import ROOT
 #from ROOT import gROOT # for creating the output file
@@ -25,6 +30,19 @@ channelsofinterest = [20, 30] # if quartz window is M7 (30)
 #channelsofinterest = [45, 42, 44, 41] # HD style HPK
 
 avf_wfm_max_tick = 1014
+beam_coincidence_cut = 20 # pd ticks
+filterlength = 10
+percentile4baseline = 10
+plotwfms = True
+plotpersistence = True
+Beamrun = True
+SPETemplateHighPassFilter = False
+AvgWfmHighPassFilter = False
+SPETemplateGaussFilter = False
+AvgWfmGaussFilter = False
+
+SPETemplateMovingAvg = False
+
 # beam run
 #wfm_peak_adc_low = 3500
 #wfm_peak_adc_high = 4000
@@ -40,30 +58,14 @@ avf_wfm_max_tick = 1014
 #trg_time_low = 220
 #trg_time_high = 290
 
-filterlength = 10
-percentile4baseline = 10
-plotwfms = False
-Beamrun = True
-SPETemplateHighPassFilter = False
-AvgWfmHighPassFilter = False
-SPETemplateGaussFilter = False
-AvgWfmGaussFilter = False
-
-SPETemplateMovingAvg = False
-
 nadcthrs = 8 # number of ADC thresholds
 
 # typical LAr two exponentials
 def LightSrcTProfile(t, Af, tauf, As, taus):
-    #print("entering func LightSrcTProfile")
-    #print("type t: ", type(t))
-    #print("type Af: ", type(Af))
-    #print("type tauf: ", type(tauf))
-    #print("type As: ", type(As))
-    #print("type taus: ", type(taus))
     return Af * np.exp(-1.0*t/tauf) + As * np.exp(-1.0*t/taus)
 
 avg_wfm = np.zeros((len(channelsofinterest),avf_wfm_max_tick), dtype=np.float32)
+filter_wfm = np.zeros((len(channelsofinterest),avf_wfm_max_tick), dtype=np.float32)
 countwfms = np.zeros((len(channelsofinterest),), dtype=np.int32)
 delta_ADC = np.zeros((len(channelsofinterest),nadcthrs), dtype=np.float32)
 
@@ -148,77 +150,96 @@ for ich in range(len(channelsofinterest)):
 # Stored: /pnfs/dune/persistent/users/weishi/PDVDNoiseHunt
 ############################
 # cosmic run, self triggered (before cover NP02)
-#filepath="/pnfs/dune/persistent/users/weishi/PDVDNoiseHunt/processed_np02vd_raw_run036362_0000_df-s04-d0_dw_0_20250507T145213.hdf5.copied_structured.hdf5"
+#dirpath="/pnfs/dune/persistent/users/weishi/PDVDNoiseHunt/processed_np02vd_raw_run036362_0000_df-s04-d0_dw_0_20250507T145213.hdf5.copied_structured.hdf5"
 # random trigger no led
-#filepath="processed_np02vd_raw_run036019_0000_df-s04-d0_dw_0_20250425T090046.hdf5_structured.hdf5"
+#dirpath="processed_np02vd_raw_run036019_0000_df-s04-d0_dw_0_20250425T090046.hdf5_structured.hdf5"
 
 ############################
 # After black blanket cover
 # Stored: /pnfs/dune/persistent/users/weishi/PDVDNoiseHunt
 ############################
 # RANDOM TRIGGER (Cover PrM fibers + temperature monitor light 1500nm on, camera on with light off, Bi source)
-#filepath="processed_np02vd_raw_run036400_0000_df-s04-d0_dw_0_20250512T121635.hdf5.copied_structured.hdf5"
-#filepath="processed_np02vd_raw_run036412_0000_df-s04-d0_dw_0_20250513T142358.hdf5.copied_structured.hdf5"
-#filepath="processed_np02vd_raw_run036413_0000_df-s04-d0_dw_0_20250513T144818.hdf5.copied_structured.hdf5"
-#filepath="processed_np02vd_raw_run036414_0000_df-s04-d0_dw_0_20250513T145205.hdf5.copied_structured.hdf5"
-#filepath="processed_np02vd_raw_run036419_0000_df-s04-d0_dw_0_20250513T151530.hdf5.copied_structured.hdf5"
+#dirpath="processed_np02vd_raw_run036400_0000_df-s04-d0_dw_0_20250512T121635.hdf5.copied_structured.hdf5"
+#dirpath="processed_np02vd_raw_run036412_0000_df-s04-d0_dw_0_20250513T142358.hdf5.copied_structured.hdf5"
+#dirpath="processed_np02vd_raw_run036413_0000_df-s04-d0_dw_0_20250513T144818.hdf5.copied_structured.hdf5"
+#dirpath="processed_np02vd_raw_run036414_0000_df-s04-d0_dw_0_20250513T145205.hdf5.copied_structured.hdf5"
+#dirpath="processed_np02vd_raw_run036419_0000_df-s04-d0_dw_0_20250513T151530.hdf5.copied_structured.hdf5"
 # RANDOM TRIGGER (Remove PrM fibers cover + temperature monitor light 1500nm off, camera on with light off, Bi source)
-#filepath="processed_np02vd_raw_run036434_0000_df-s04-d0_dw_0_20250514T084924.hdf5.copied_structured.hdf5"
-#filepath="processed_np02vd_raw_run036435_0000_df-s04-d0_dw_0_20250514T085249.hdf5.copied_structured.hdf5"
+#dirpath="processed_np02vd_raw_run036434_0000_df-s04-d0_dw_0_20250514T084924.hdf5.copied_structured.hdf5"
+#dirpath="processed_np02vd_raw_run036435_0000_df-s04-d0_dw_0_20250514T085249.hdf5.copied_structured.hdf5"
 # RANDOM TRIGGER (Remove PrM fibers cover + temperature monitor light 1500nm off and fibers unplugged and flange covered, camera on with light off, Bi source)
-#filepath="processed_np02vd_raw_run036445_0000_df-s04-d0_dw_0_20250514T093130.hdf5.copied_structured.hdf5"
-#filepath="processed_np02vd_raw_run036449_0000_df-s04-d0_dw_0_20250514T094448.hdf5.copied_structured.hdf5"
-#filepath="processed_np02vd_raw_run036463_0000_df-s04-d0_dw_0_20250514T103210.hdf5.copied_structured.hdf5"
-#filepath="processed_np02vd_raw_run036457_0000_df-s04-d0_dw_0_20250514T101218.hdf5.copied_structured.hdf5"
+#dirpath="processed_np02vd_raw_run036445_0000_df-s04-d0_dw_0_20250514T093130.hdf5.copied_structured.hdf5"
+#dirpath="processed_np02vd_raw_run036449_0000_df-s04-d0_dw_0_20250514T094448.hdf5.copied_structured.hdf5"
+#dirpath="processed_np02vd_raw_run036463_0000_df-s04-d0_dw_0_20250514T103210.hdf5.copied_structured.hdf5"
+#dirpath="processed_np02vd_raw_run036457_0000_df-s04-d0_dw_0_20250514T101218.hdf5.copied_structured.hdf5"
 # RANDOM TRIGGER (Manhole not covered)
-#filepath="processed_np02vd_raw_run036481_0000_df-s04-d0_dw_0_20250515T085932.hdf5.copied_structured.hdf5"
-#filepath="processed_np02vd_raw_run036482_0000_df-s04-d0_dw_0_20250515T090254.hdf5.copied_structured.hdf5"
+#dirpath="processed_np02vd_raw_run036481_0000_df-s04-d0_dw_0_20250515T085932.hdf5.copied_structured.hdf5"
+#dirpath="processed_np02vd_raw_run036482_0000_df-s04-d0_dw_0_20250515T090254.hdf5.copied_structured.hdf5"
 # RANDOM TRIGGER (Manhole covered with copper foil and black blankets)
-#filepath="processed_np02vd_raw_run036489_0000_df-s04-d0_dw_0_20250515T103041.hdf5.copied_structured.hdf5"
-#filepath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/precommissioning/check_light_leakage/processed_np02vd_raw_run036498_0000_df-s04-d0_dw_0_20250515T105742.hdf5.copied_structured.hdf5"
+#dirpath="processed_np02vd_raw_run036489_0000_df-s04-d0_dw_0_20250515T103041.hdf5.copied_structured.hdf5"
+#dirpath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/precommissioning/check_light_leakage/processed_np02vd_raw_run036498_0000_df-s04-d0_dw_0_20250515T105742.hdf5.copied_structured.hdf5"
 # Random trigger: EHN1 lights off
-#filepath="processed_np02vd_raw_run036577_0000_df-s04-d0_dw_0_20250519T165114.hdf5.copied_structured.hdf5"
-#filepath="processed_np02vd_raw_run036578_0000_df-s04-d0_dw_0_20250519T165430.hdf5.copied_structured.hdf5"
-#filepath="processed_np02vd_raw_run036583_0000_df-s04-d0_dw_0_20250519T180550.hdf5.copied_structured.hdf5"
-#filepath="processed_np02vd_raw_run036584_0000_df-s04-d0_dw_0_20250519T181700.hdf5.copied_structured.hdf5"
+#dirpath="processed_np02vd_raw_run036577_0000_df-s04-d0_dw_0_20250519T165114.hdf5.copied_structured.hdf5"
+#dirpath="processed_np02vd_raw_run036578_0000_df-s04-d0_dw_0_20250519T165430.hdf5.copied_structured.hdf5"
+#dirpath="processed_np02vd_raw_run036583_0000_df-s04-d0_dw_0_20250519T180550.hdf5.copied_structured.hdf5"
+#dirpath="processed_np02vd_raw_run036584_0000_df-s04-d0_dw_0_20250519T181700.hdf5.copied_structured.hdf5"
 # July 7 LED calib run
-#filepath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run037066_membrane/processed_np02vd_raw_run037066_0000_df-s04-d0_dw_0_20250707T145032.hdf5.copied_structured_membrane.hdf5"
+#dirpath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run037066_membrane/processed_np02vd_raw_run037066_0000_df-s04-d0_dw_0_20250707T145032.hdf5.copied_structured_membrane.hdf5"
 # July 8, cathode no HV, cathode PD modules off, membrane PD modules only
-#filepath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run037089_membrane/processed_merged_run037089_structured_membrane.hdf5"
+#dirpath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run037089_membrane/processed_merged_run037089_structured_membrane.hdf5"
 # July 8, cathode no HV, cathode + membrane PD modules ON
-#filepath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run037094_cathode/processed_merged_run037094_structured_cathode.hdf5"
-#filepath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run037094_membrane/processed_merged_run037094_structured_membrane.hdf5"
+#dirpath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run037094_cathode/processed_merged_run037094_structured_cathode.hdf5"
+#dirpath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run037094_membrane/processed_merged_run037094_structured_membrane.hdf5"
 # July 9, cathode no HV, cathode + membrane PD modules ON, LHU2-L5 OFF --> C6 module only operated by L6
-#filepath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run037130_cathode/processed_merged_run037130_structured_cathode.hdf5"
-#filepath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run037130_membrane/processed_merged_run037130_structured_membrane.hdf5"
+#dirpath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run037130_cathode/processed_merged_run037130_structured_cathode.hdf5"
+#dirpath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run037130_membrane/processed_merged_run037130_structured_membrane.hdf5"
 # July 10, cathode HV @ 154 kV, cathode + membrane PD modules ON, LHU2-L5 OFF --> C6 module only operated by L6
-#filepath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run037210_membrane/processed_merged_run037210_structured_membrane.hdf5"
-#filepath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run037210_cathode/processed_merged_run037210_structured_cathode.hdf5"
+#dirpath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run037210_membrane/processed_merged_run037210_structured_membrane.hdf5"
+#dirpath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run037210_cathode/processed_merged_run037210_structured_cathode.hdf5"
 # July 10, cathode HV @ 154 kV, ONLY membrane PD modules ON
-#filepath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run037212_membrane/processed_merged_run037212_structured_membrane.hdf5"
-#filepath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run037213_membrane/processed_merged_run037213_structured_membrane.hdf5"
+#dirpath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run037212_membrane/processed_merged_run037212_structured_membrane.hdf5"
+#dirpath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run037213_membrane/processed_merged_run037213_structured_membrane.hdf5"
 # July 10: first beam run +12 GeV
-filepath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run037218_membrane/processed_merged_run037218_structured_membrane.hdf5"
-#filepath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run037218_cathode/processed_merged_run037218_structured_cathode.hdf5"
+#dirpath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run037218_membrane/processed_merged_run037218_structured_membrane.hdf5"
+#dirpath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run037218_cathode/processed_merged_run037218_structured_cathode.hdf5"
 # July 13: beam trig +5 GeV
-#filepath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run037249_membrane/processed_np02vd_raw_run037249_0000_df-s05-d0_dw_0_20250713T094009.hdf5.copied_structured_membrane.hdf5"
+#dirpath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run037249_membrane/processed_np02vd_raw_run037249_0000_df-s05-d0_dw_0_20250713T094009.hdf5.copied_structured_membrane.hdf5"
 # July 14: beam run +2 GeV
-#filepath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run037260_membrane/processed_np02vd_raw_run037260_0000_df-s05-d0_dw_0_20250714T164808.hdf5.copied_structured_membrane.hdf5"
+#dirpath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run037260_membrane/processed_np02vd_raw_run037260_0000_df-s05-d0_dw_0_20250714T164808.hdf5.copied_structured_membrane.hdf5"
 # July 15: beam +5 GeV, cathode full stream, + memb, Beam low cherenkov 2.3 bar (normal should be 4 bar), high cherenkov 14 bar
-#filepath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run037275_membrane/processed_np02vd_raw_run037275_0000_df-s05-d0_dw_0_20250715T154533.hdf5.copied_structured_membrane.hdf5"
+#dirpath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run037275_membrane/processed_np02vd_raw_run037275_0000_df-s05-d0_dw_0_20250715T154533.hdf5.copied_structured_membrane.hdf5"
 # July 15: beam +5 GeV, NO cathode PDS, membrane PD only, Beam low cherenkov 2.3 bar (normal should be 4 bar), high cherenkov 14 bar
-#filepath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run037276_membrane/processed_np02vd_raw_run037276_0000_df-s05-d0_dw_0_20250715T190106.hdf5.copied_structured_membrane.hdf5"
+#dirpath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run037276_membrane/processed_np02vd_raw_run037276_0000_df-s05-d0_dw_0_20250715T190106.hdf5.copied_structured_membrane.hdf5"
 
 # Cosmic trigger
 # /pnfs/dune/persistent/users/weishi/PDVDNoiseHunt/processed_np02vd_raw_run036401_0000_df-s04-d0_dw_0_20250512T122851.hdf5.copied_structured.hdf5
-#filepath="processed_np02vd_raw_run036405_0000_df-s04-d0_dw_0_20250513T123222.hdf5.copied_structured.hdf5" - same condition as cosmic run 36362
-#filepath="processed_np02vd_raw_run036401_0000_df-s04-d0_dw_0_20250512T122851.hdf5.copied_structured.hdf5"
+#dirpath="processed_np02vd_raw_run036405_0000_df-s04-d0_dw_0_20250513T123222.hdf5.copied_structured.hdf5" - same condition as cosmic run 36362
+#dirpath="processed_np02vd_raw_run036401_0000_df-s04-d0_dw_0_20250512T122851.hdf5.copied_structured.hdf5"
 
-wfset = load_structured_waveformset(str(filepath))
+# 2nd beam period Aug 5
+# run 38563, 2 GeV incluide all particles with High Presion Cherenkov off
+#dirpath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run038563_membrane/"
+# run 38564, 2 GeV incluide all particles with the optimal Cherenkov configuration
+dirpath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run038564_membrane/"
+# run 38565, 2 GeV incluide all particles with the optimal Cherenkov configuration
+#dirpath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run038565_membrane/"
 
-print("file path: ", filepath)
-print("run number: ", wfset.runs)
-print("available channels: ", wfset.available_channels)
+############################
+# Load waveforms
+############################
+
+waveforms =[]
+file_pattern = os.path.join(dirpath, "*.hdf5")
+hdf5_files = glob.glob(file_pattern)
+for filepath in hdf5_files:
+    print(filepath)
+    iwfset = load_structured_waveformset(str(filepath))
+    waveforms.extend(iwfset.waveforms)
+
+wfset = WaveformSet(*waveforms)
+
+print("file path: ", dirpath)
+print("run number: ", wfset.waveforms[0].run_number)
 print("tot waveforms from all channels: ", len(wfset.waveforms))
 print("1st wfm attributes: ", vars(wfset.waveforms[0]))
 print("1st wfm adcs: ", wfset.waveforms[0].adcs)
@@ -231,8 +252,8 @@ if avf_wfm_max_tick >= len(wfset.waveforms[0].adcs):
 
 # Outer loop to create sublists
 for ich in range(len(channelsofinterest)):
-    # Append a sublist of length the tot number of wfms
-    daq_pd_dt.append([ich] * 10000)
+    # Append sublists
+    daq_pd_dt.append([ich] * 0)
 
 # overlay raw adc waveforms from same trigger event based on daq time
 daq_trigger_time = []
@@ -240,81 +261,81 @@ count_overlay_plot = 0
 for iwfm in range(len(wfset.waveforms)):
     # get the daq time stamp
     if count_overlay_plot > 15: break
-    if wfset.waveforms[iwfm].channel == 30 and abs(wfset.waveforms[iwfm].daq_window_timestamp - wfset.waveforms[iwfm].timestamp) < 10:
+    if wfset.waveforms[iwfm].channel == 30 and abs(wfset.waveforms[iwfm].daq_window_timestamp - wfset.waveforms[iwfm].timestamp) < beam_coincidence_cut:
         # this is the list of events we want to check all channels' wfms together
         daq_trigger_time.append(wfset.waveforms[iwfm].daq_window_timestamp)
         count_overlay_plot = count_overlay_plot +1
 
 # Main loop
 for iwfm in range(len(wfset.waveforms)):
-#for iwfm in range(10000):
-    #if iwfm< 300: print("wfm #: ", iwfm, ", ch: ", wfset.waveforms[0].channel, ", DAQ time: ", wfset.waveforms[iwfm].daq_window_timestamp, ", PD time: ", wfset.waveforms[iwfm].timestamp, ", dt: ", abs(wfset.waveforms[iwfm].daq_window_timestamp - wfset.waveforms[iwfm].timestamp))
 
         if iwfm % 10000 == 0:
             print(iwfm)
 
         for ich in range(len(channelsofinterest)):
+            #print("ich: ", ich)
             channelofinterest = channelsofinterest[ich]
 
             if wfset.waveforms[iwfm].channel == channelofinterest:
 
+                # find baseline of the wfm
+                baseline_ADC = 0
+                peak_adc = 0
+                # smooth it out
+                wfset.waveforms[iwfm].filtered = np.convolve(wfset.waveforms[iwfm].adcs, np.ones(filterlength), 'valid') / filterlength
+                # use the mode of adcs of a wfm as baseline
+                #baseline_ADC = statistics.mode(wfset.waveforms[iwfm].filtered)
+                # use average from certain lowest percentile
+                # need x <= since in some wfms has same adcs
+                baseline_ADC = statistics.mean(filter(lambda x: x <= np.percentile(wfset.waveforms[iwfm].filtered, percentile4baseline), wfset.waveforms[iwfm].filtered))
+                peak_adc = statistics.mode(wfset.waveforms[iwfm].filtered)
+
                 # control plot
-                if countwfms[ich] < 10000: daq_pd_dt[ich].append(abs(wfset.waveforms[iwfm].daq_window_timestamp - wfset.waveforms[iwfm].timestamp))
+                daq_pd_dt[ich].append(abs(wfset.waveforms[iwfm].daq_window_timestamp - wfset.waveforms[iwfm].timestamp))
+
+                # control plot: overlay wfms
+                if plotpersistence == True:
+                    for itick in range(avf_wfm_max_tick):
+                        filter_wfm[ich][itick] = wfset.waveforms[iwfm].filtered[itick] - baseline_ADC
+
+                    plt.figure(channelofinterest)
+                    if peak_adc > 15000:
+                        xaxis = [x for x in range(len(filter_wfm[ich]))]
+                        plt.plot(xaxis, filter_wfm[ich])
 
                 # Overlay raw adc waveforms from same trigger event based on daq time
                 for idaqtime in range(len(daq_trigger_time)):
-                    if wfset.waveforms[iwfm].daq_window_timestamp == daq_trigger_time[idaqtime] and abs(wfset.waveforms[iwfm].daq_window_timestamp - wfset.waveforms[iwfm].timestamp) < 10:
+                    if wfset.waveforms[iwfm].daq_window_timestamp == daq_trigger_time[idaqtime] and abs(wfset.waveforms[iwfm].daq_window_timestamp - wfset.waveforms[iwfm].timestamp) < beam_coincidence_cut:
                         # multiple wfm from 1 channel can satisfy this condition
                         # use the min dt????
                         plt.figure(idaqtime)
                         xaxis = [x for x in range(len(wfset.waveforms[iwfm].adcs))]
                         plt.plot(xaxis, wfset.waveforms[iwfm].adcs, color=colors[ich], label=[modules[channelsofinterest[ich]]])
 
-
                 # For membrane modules: requiring PD time stamp and DAQ time stamp within certain range (channel dependent) to make sure it's selecting beam event
-                if (Beamrun == True and abs(wfset.waveforms[iwfm].daq_window_timestamp - wfset.waveforms[iwfm].timestamp) < 10) or Beamrun == False:
-
-                    # find baseline of the wfm
-                    baseline_ADC = 0
-                    peak_adc = 0
-
-                    wfset.waveforms[iwfm].filtered = np.convolve(wfset.waveforms[iwfm].adcs, np.ones(filterlength), 'valid') / filterlength
-                    # use the mode of adcs of a wfm as baseline
-                    #baseline_ADC = statistics.mode(wfset.waveforms[iwfm].filtered)
-                    # use average from certain lowest percentile
-                    # need x <= since in some wfms has same adcs
-                    baseline_ADC = statistics.mean(filter(lambda x: x <= np.percentile(wfset.waveforms[iwfm].filtered, percentile4baseline), wfset.waveforms[iwfm].filtered))
+                #print("Beamrun: ", Beamrun, "abs dt: ", abs(wfset.waveforms[iwfm].daq_window_timestamp - wfset.waveforms[iwfm].timestamp))
+                if (Beamrun == True and abs(wfset.waveforms[iwfm].daq_window_timestamp - wfset.waveforms[iwfm].timestamp) < beam_coincidence_cut) or Beamrun == False:
+                    #print("beamtrue: ", iwfm)
 
                     # Fill baseline ADC of all waveforms in the data (a distribution of baselines)
                     BaselineADCAllWfms.append(baseline_ADC)
 
-                    # Loop over points in the waveform
-                    #for itick in range(avf_wfm_max_tick):
-                        # find peak adc in beam trig run
-                    #    if itick < trg_time_high and itick > trg_time_low and wfset.waveforms[iwfm].filtered[itick] - baseline_ADC > peak_adc:
-                    #        peak_adc = wfset.waveforms[iwfm].filtered[itick] - baseline_ADC
-
-                    # avg with certain range adcs relative to baseline
-                    #if peak_adc >= wfm_peak_adc_low and peak_adc <= wfm_peak_adc_high:
-                        #print("peak_adc: ", peak_adc)
                     countwfms[ich] = countwfms[ich] + 1
                     for itick in range(avf_wfm_max_tick):
                         # sum up wfms for avg later
                         avg_wfm[ich][itick] += wfset.waveforms[iwfm].filtered[itick] - baseline_ADC
 
-
                     if iwfm < 1000 and plotwfms == True:
-                        # plot the wfm individually
                         xaxis = [x for x in range(len(wfset.waveforms[iwfm].adcs))]
                         plt.plot(xaxis, wfset.waveforms[iwfm].adcs)
-                        plt.savefig("plots/"+str(wfset.runs)+"_ch_"+str(channelofinterest)+"wfm_"+str(iwfm)+"_adcs.pdf")
+                        plt.savefig("plots/"+str(wfset.waveforms[0].run_number)+"_ch_"+str(channelofinterest)+"wfm_"+str(iwfm)+"_adcs.pdf")
                         plt.clf() # important to clear figure
                         plt.close()
 
                         xaxis = [x for x in range(len(wfset.waveforms[iwfm].filtered))]
                         plt.plot(xaxis, wfset.waveforms[iwfm].filtered)
                         plt.hlines(y=[baseline_ADC], xmin=0, xmax=len(wfset.waveforms[0].adcs), colors=['r'], linestyles=['--']) # also plot the calculated baseline in red for each wfm
-                        plt.savefig("plots/"+str(wfset.runs)+"_ch_"+str(channelofinterest)+"wfm_"+str(iwfm)+"_movingavged.pdf")
+                        plt.savefig("plots/"+str(wfset.waveforms[0].run_number)+"_ch_"+str(channelofinterest)+"wfm_"+str(iwfm)+"_movingavged.pdf")
                         plt.clf() # important to clear figure
                         plt.close()
 
@@ -323,7 +344,7 @@ for iwfm in range(len(wfset.waveforms)):
 #plt.hist(Baselines_allwfms, range=(0,10000), bins=1000)
 #plt.xlabel('ADC')
 #plt.draw()
-#plt.savefig("./"+str(wfset.runs)+"_ch_"+str(channelsofinterest[ich])+"_baselines.pdf")
+#plt.savefig("./"+str(wfset.waveforms[0].run_number)+"_ch_"+str(channelsofinterest[ich])+"_baselines.pdf")
 #plt.clf() # important to clear figure
 #plt.close()
 
@@ -331,22 +352,35 @@ for iwfm in range(len(wfset.waveforms)):
 for idaqtime in range(len(daq_trigger_time)):
     plt.figure(idaqtime)
     plt.legend(loc="upper right")
-    plt.savefig("./overlay_wfm_memb_"+str(wfset.runs)+"_daqT_"+str(daq_trigger_time[idaqtime])+".pdf")
+    plt.savefig("./overlay_wfm_memb_"+str(wfset.waveforms[0].run_number)+"_daqT_"+str(daq_trigger_time[idaqtime])+".pdf")
     plt.clf() # important to clear figure
     plt.close()
+
+if plotpersistence == True:
+    for ich in range(len(channelsofinterest)):
+        plt.figure(channelsofinterest[ich])
+        plt.savefig("./persistent_big_wfms_memb_"+str(wfset.waveforms[0].run_number)+"_ch_"+str(channelsofinterest[ich])+".pdf")
+        plt.clf() # important to clear figure
+        plt.close()
 
 for ich in range(len(channelsofinterest)):
     channelofinterest = channelsofinterest[ich]
     dt_allwfms = [(x) for x in daq_pd_dt[ich]]
-    plt.hist(dt_allwfms, range=(0,1000), bins=200, log=True)
+    plt.hist(dt_allwfms, range=(0,400000), bins=1000, log=True)
     plt.xlabel('|t_daq - t_pd|')
     plt.draw()
-    plt.savefig("./dt_"+str(wfset.runs)+"_ch_"+str(channelsofinterest[ich])+".pdf")
+    plt.savefig("./dt_"+str(wfset.waveforms[0].run_number)+"_ch_"+str(channelsofinterest[ich])+"_fullDAQwindow.pdf")
+    plt.clf() # important to clear figure
+    plt.close()
+    plt.hist(dt_allwfms, range=(0,500), bins=100, log=True)
+    plt.xlabel('|t_daq - t_pd|')
+    plt.draw()
+    plt.savefig("./dt_"+str(wfset.waveforms[0].run_number)+"_ch_"+str(channelsofinterest[ich])+"_zoomin.pdf")
     plt.clf() # important to clear figure
     plt.close()
 
 print("iwfm at end: ", iwfm)
-print("run number: ", wfset.runs)
+print("run number: ", wfset.waveforms[0].run_number)
 
 # avg wfm
 print("================= Avg Wfm Report =================  ")
@@ -361,7 +395,7 @@ for ich in range(len(channelsofinterest)):
 # subtract basline of avg wfm for deconvolve
 for ich in range(len(channelsofinterest)):
 
-    with open(str(wfset.runs)+"_ch_"+str(channelsofinterest[ich])+"_AVG_wfm.txt", "w") as f:
+    with open(str(wfset.waveforms[0].run_number)+"_ch_"+str(channelsofinterest[ich])+"_AVG_wfm.txt", "w") as f:
 
         # subtract basline of avg wfm for deconvolve
         baseline_ADC_avg_wfm = statistics.mean(filter(lambda x: x <= np.percentile(avg_wfm[ich], percentile4baseline), avg_wfm[ich]))
@@ -425,7 +459,7 @@ for ich in range(len(channelsofinterest)):
     plt.plot(xaxis_gaussfiltered, avg_wfm_Gauss_filtered, 'green', label=str(modules[channelsofinterest[ich]])+'- Gauss filter')
     plt.grid(True)
     plt.legend()
-    plt.savefig("./"+str(wfset.runs)+"_ch_"+str(channelsofinterest[ich])+"_AVG_wfm_makeups.pdf")
+    plt.savefig("./"+str(wfset.waveforms[0].run_number)+"_ch_"+str(channelsofinterest[ich])+"_AVG_wfm_makeups.pdf")
     plt.clf() # important to clear figure
     plt.close()
 
@@ -509,14 +543,14 @@ for ich in range(len(channelsofinterest)):
     # plot deconvolved source
     xaxis = [x for x in range(len(source))]
     plt.plot(xaxis, source)
-    plt.savefig("./"+str(wfset.runs)+"_ch_"+str(channelsofinterest[ich])+"_light_source.pdf")
+    plt.savefig("./"+str(wfset.waveforms[0].run_number)+"_ch_"+str(channelsofinterest[ich])+"_light_source.pdf")
     plt.clf() # important to clear figure
     plt.close()
 
     # smooth the deconvolved source
     source_filtered = np.convolve(source, np.ones(filterlength), 'valid') / filterlength
     print("ch", channelsofinterest[ich], " source filtered: ", source_filtered)
-    with open(str(wfset.runs)+"_ch_"+str(channelsofinterest[ich])+"_light_source_smoothed.txt", "w") as f:
+    with open(str(wfset.waveforms[0].run_number)+"_ch_"+str(channelsofinterest[ich])+"_light_source_smoothed.txt", "w") as f:
         # loop over ticks
         for itick in range(len(source_filtered)):
             # store avg wfm in txt
@@ -527,7 +561,12 @@ for ich in range(len(channelsofinterest)):
     #####################################################
     xaxis = [x for x in range(len(source_filtered))]
     print("xaxis:", xaxis)
-    fit_start_tick = 14
+    if channelsofinterest[ich] == 20:
+        fit_start_tick = 11
+    if channelsofinterest[ich] == 30:
+        fit_start_tick = 14
+    else:
+        fit_start_tick = 14
     xaxis_fit = xaxis[fit_start_tick:]
     source_filtered_fit = source_filtered[fit_start_tick:]
     popt, pcov = curve_fit(LightSrcTProfile, np.array(xaxis_fit), source_filtered_fit, p0=(0.5,20.0,0.2,300.0))
@@ -538,9 +577,9 @@ for ich in range(len(channelsofinterest)):
     fitresult = LightSrcTProfile(np.array(xaxis_fit), Af, tauf, As, taus)
 
     # plot filtered source
-    plt.plot(xaxis, source_filtered, label=str(modules[channelsofinterest[ich]])+': run'+str(wfset.runs))
+    plt.plot(xaxis, source_filtered, label=str(modules[channelsofinterest[ich]])+': run'+str(wfset.waveforms[0].run_number))
     plt.plot(xaxis_fit, fitresult, 'red', label=f'Fit func = Af * exp(-t/tauf) + As * exp(-t/taus):\n Af={Af:.2f}, tauf={tauf:.1f} [x 16ns], As={As:.2f}, taus={taus:.1f} [x 16ns]')
     plt.legend()
-    plt.savefig("./"+str(wfset.runs)+"_ch_"+str(channelsofinterest[ich])+"_light_source_smoothed_withfit.pdf")
+    plt.savefig("./"+str(wfset.waveforms[0].run_number)+"_ch_"+str(channelsofinterest[ich])+"_light_source_smoothed_withfit.pdf")
     plt.clf() # important to clear figure
     plt.close()
