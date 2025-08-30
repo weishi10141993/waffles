@@ -2,6 +2,7 @@ import json
 import click
 from pathlib import Path
 import numpy as np
+from scipy.fft import fft, ifft, fftfreq
 import matplotlib.pyplot as plt
 import statistics
 from scipy import signal
@@ -9,17 +10,14 @@ import scipy.linalg
 from scipy.optimize import curve_fit
 from scipy.signal import butter, sosfiltfilt
 from scipy.ndimage import gaussian_filter1d
+from scipy.integrate import quad
 import glob
 import os
+import math
 
 from waffles.input_output.hdf5_structured import load_structured_waveformset
-import waffles.plotting.drawing_tools as draw
-
 from waffles.data_classes.WaveformSet import WaveformSet
 from waffles.data_classes.Waveform import Waveform
-
-#import ROOT
-#from ROOT import gROOT # for creating the output file
 
 # cathode channels
 #channelsofinterest = [32, 31, 34, 36, 2, 1, 5, 4]
@@ -29,162 +27,91 @@ channelsofinterest = [20, 30] # if quartz window is M7 (30)
 #channelsofinterest = [0, 10] # if quartz window is M8 (10)
 #channelsofinterest = [45, 42, 44, 41] # HD style HPK
 
-avf_wfm_max_tick = 1014
+Beamrun = True
 beam_coincidence_cut = 20 # pd ticks
+
+sampling_rate = 62500000 # PDS tick 16ns, 62.5 M
+cutoff_frequency_fft = 10000000 # 10 MHz
+FFTGaussFilter = True # Add Gauss Filter to smear fft
+# Gauss filter to smear fft
+sigma_freq = 5000000 # 5 MHz is a good option, 10MHz doesn't provide enough smear, 1MHz too much smear
+
 filterlength = 10
 percentile4baseline = 10
-plotwfms = True
-plotpersistence = True
-Beamrun = True
+
+plotwfms = False
+plotpersistence = False
 SPETemplateHighPassFilter = False
-AvgWfmHighPassFilter = False
 SPETemplateGaussFilter = False
+SPETemplateMovingAvg = False
+AvgWfmHighPassFilter = False
 AvgWfmGaussFilter = False
 
-SPETemplateMovingAvg = False
+# July 7 LED calib run: digital compensator off
+#dirpath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run037066_membrane/"
 
-# beam run
-#wfm_peak_adc_low = 3500
-#wfm_peak_adc_high = 4000
-# LED run mask 8
-#wfm_peak_adc_low = 25
-#wfm_peak_adc_high = 40
-#wfm_peak_adc_low = 400
-#wfm_peak_adc_high = 450
-# beam run
-#trg_time_low = 0
-#trg_time_high = 100
-# LED run
-#trg_time_low = 220
-#trg_time_high = 290
+##################################
+# 3rd beam period Aug 22
+##################################
+#++++++++++++++++++++++++++++++++++++
+# Pure electrons: all ask for HL trig
+#++++++++++++++++++++++++++++++++++++
+# run 39046, 0.5 GeV, L - 5bar, H - 14bar, Cu target - exists
+#dirpath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run039046_membrane/"
+# run 38930, 1 GeV, L - 4.5bar, H - 14bar, W target - exist
+#dirpath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run038930_membrane/"
+# run 39047, 1.5 GeV, L - 4bar, H - 14bar, W target - exists
+#dirpath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run039047_membrane/"
+# run 39030, 2 GeV, L - 2bar, H - 10bar, W target - exist
+#dirpath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run039030_membrane/"
+# run 39105, 2.5 GeV, L - 1.3bar, H - 10bar, W target - exist
+#dirpath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run039105_membrane/"
+# run 39007, 3 GeV, L - 1bar, H - 10bar, W target - exists
+#dirpath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run039007_membrane/"
+# run 39106, 4 GeV, L - 0.5bar, H - 8bar, Cu target
+#dirpath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run039106_membrane/"
+# run 39108, 5 GeV, L - 0.25bar, H - 5bar, Cu target
+#dirpath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run039108_membrane/"
+# 6 GeV Cu target unknown run #??
 
-nadcthrs = 8 # number of ADC thresholds
+#+++++++++++++++++++++++++++++++++
+# Pure pions: all ask for HLx trig
+#+++++++++++++++++++++++++++++++++
+#- NO MEMBRANE PROCESSES FILE
+# run 39026, 3 GeV, L - 1.8bar, H - 5bar, W target
+#dirpath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run039026_membrane/"
+# run 39027, 6 GeV, L - 0.45bar, H - 5bar, Cu target
+dirpath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run039027_membrane/"
 
-# typical LAr two exponentials
-def LightSrcTProfile(t, Af, tauf, As, taus):
-    return Af * np.exp(-1.0*t/tauf) + As * np.exp(-1.0*t/taus)
 
-avg_wfm = np.zeros((len(channelsofinterest),avf_wfm_max_tick), dtype=np.float32)
-filter_wfm = np.zeros((len(channelsofinterest),avf_wfm_max_tick), dtype=np.float32)
-countwfms = np.zeros((len(channelsofinterest),), dtype=np.int32)
-delta_ADC = np.zeros((len(channelsofinterest),nadcthrs), dtype=np.float32)
+#----------------------------------------------------------------------------------------------------------------------------------------
 
-BaselineADCAllWfms = []
-daq_pd_dt = []
-colors = ['b', 'g', 'r', 'c', 'm', 'y', 'k', 'b', 'b', 'g', 'r', 'c', 'm', 'y', 'k']
 
-modules = ["None"] * 100
+##################################
+# 2nd beam period
+##################################
+# 0.5 GeV - HP 14 Bar, LP 5 Bar (Good Run) - HLx+HxLx+HLx+HL triggers
+#dirpath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run038648_membrane/"
+# 1 GeV - HP 14 Bar, LP 5 Bar (Good Run) - HLx+HxLx+HLx+HL triggers
+#dirpath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run038645_membrane/"
+# 1.5 GeV - HP 14 Bar, LP 4 Bar (Good Run) - HLx+HxLx+HLx+HL triggers
+#dirpath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run038670_membrane/"
+# 2 GeV - HP 14 Bar, LP 5 Bar (Good Run) - HLx+HxLx+HLx+HL triggers
+#dirpath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run038651_membrane/"
+# 3 GeV - HP 14 Bar, LP 5 Bar (Good Run) - HLx+HxLx+HLx+HL triggers
+#dirpath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run038658_membrane/"
+# 4 GeV - HP 14 Bar, LP 1.2 Bar (Good Run) - HLx+HxLx+HLx+HL triggers
+#dirpath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run038660_membrane/"
 
-for ich in range(len(channelsofinterest)):
-    # depends on channel, set at roughly SPE amplitude
-    if channelsofinterest[ich] == 30: # SPE ADC is 35 per Jacob
-        delta_ADC[ich][0] = 25
-        step_size = 30
-        modules[channelsofinterest[ich]]= ["M7"]
-    if channelsofinterest[ich] == 10:
-        delta_ADC[ich][0] = 20
-        step_size = 25
-        modules[channelsofinterest[ich]]= ["M8"]
-    if channelsofinterest[ich] == 0: # SPE ADC is 22-23 per Jacob
-        delta_ADC[ich][0] = 20
-        step_size = 25
-        modules[channelsofinterest[ich]]= ["M5"]
-    if channelsofinterest[ich] == 20:
-        delta_ADC[ich][0] = 30
-        step_size = 35
-        modules[channelsofinterest[ich]]= ["M6"]
-    if channelsofinterest[ich] == 41: # M4, very noisy, shouldn't trust noise count
-        delta_ADC[ich][0] = 30
-        step_size = 35
-        modules[channelsofinterest[ich]]= ["M4"]
-    if channelsofinterest[ich] == 42: # M2, very noisy, shouldn't trust noise count
-        delta_ADC[ich][0] = 15
-        step_size = 20
-        modules[channelsofinterest[ich]]= ["M2"]
-    if channelsofinterest[ich] == 44: # M3, very noisy, shouldn't trust noise count
-        delta_ADC[ich][0] = 20
-        step_size = 25
-        modules[channelsofinterest[ich]]= ["M3"]
-    if channelsofinterest[ich] == 45: # M1, very noisy, shouldn't trust noise count
-        delta_ADC[ich][0] = 20
-        step_size = 25
-        modules[channelsofinterest[ich]]= ["M1"]
-    if channelsofinterest[ich] == 1:
-        delta_ADC[ich][0] = 10
-        step_size = 15
-        modules[channelsofinterest[ich]]= ["C6"]
-    if channelsofinterest[ich] == 2:
-        delta_ADC[ich][0] = 15
-        step_size = 20
-        modules[channelsofinterest[ich]]= ["C5"]
-    if channelsofinterest[ich] == 4:
-        delta_ADC[ich][0] = 5
-        step_size = 10
-        modules[channelsofinterest[ich]]= ["C8"]
-    if channelsofinterest[ich] == 5:
-        delta_ADC[ich][0] = 15
-        step_size = 20
-        modules[channelsofinterest[ich]]= ["C7"]
-    if channelsofinterest[ich] == 31:
-        delta_ADC[ich][0] = 20
-        step_size = 25
-        modules[channelsofinterest[ich]]= ["C2"]
-    if channelsofinterest[ich] == 32: # SPE is 32 ADC per Jacob analysis Jul 10
-        delta_ADC[ich][0] = 27
-        step_size = 32
-        modules[channelsofinterest[ich]]= ["C1"]
-    if channelsofinterest[ich] == 34:
-        delta_ADC[ich][0] = 10
-        step_size = 15
-        modules[channelsofinterest[ich]]= ["C3"]
-    if channelsofinterest[ich] == 36:
-        delta_ADC[ich][0] = 10
-        step_size = 15
-        modules[channelsofinterest[ich]]= ["C4"]
+#Aug 5
+# run 38563, 2 GeV incluide all particles with High Presion Cherenkov off
+#dirpath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run038563_membrane/"
+# run 38564, 2 GeV incluide all particles with the optimal Cherenkov configuration
+#dirpath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run038564_membrane/"
+# run 38565, 2 GeV incluide all particles with the optimal Cherenkov configuration
+#dirpath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run038565_membrane/"
 
-    for ithres in range(nadcthrs):
-        delta_ADC[ich][ithres] = delta_ADC[ich][0] + step_size*ithres
 
-############################
-# Before black blanket cover
-# Stored: /pnfs/dune/persistent/users/weishi/PDVDNoiseHunt
-############################
-# cosmic run, self triggered (before cover NP02)
-#dirpath="/pnfs/dune/persistent/users/weishi/PDVDNoiseHunt/processed_np02vd_raw_run036362_0000_df-s04-d0_dw_0_20250507T145213.hdf5.copied_structured.hdf5"
-# random trigger no led
-#dirpath="processed_np02vd_raw_run036019_0000_df-s04-d0_dw_0_20250425T090046.hdf5_structured.hdf5"
-
-############################
-# After black blanket cover
-# Stored: /pnfs/dune/persistent/users/weishi/PDVDNoiseHunt
-############################
-# RANDOM TRIGGER (Cover PrM fibers + temperature monitor light 1500nm on, camera on with light off, Bi source)
-#dirpath="processed_np02vd_raw_run036400_0000_df-s04-d0_dw_0_20250512T121635.hdf5.copied_structured.hdf5"
-#dirpath="processed_np02vd_raw_run036412_0000_df-s04-d0_dw_0_20250513T142358.hdf5.copied_structured.hdf5"
-#dirpath="processed_np02vd_raw_run036413_0000_df-s04-d0_dw_0_20250513T144818.hdf5.copied_structured.hdf5"
-#dirpath="processed_np02vd_raw_run036414_0000_df-s04-d0_dw_0_20250513T145205.hdf5.copied_structured.hdf5"
-#dirpath="processed_np02vd_raw_run036419_0000_df-s04-d0_dw_0_20250513T151530.hdf5.copied_structured.hdf5"
-# RANDOM TRIGGER (Remove PrM fibers cover + temperature monitor light 1500nm off, camera on with light off, Bi source)
-#dirpath="processed_np02vd_raw_run036434_0000_df-s04-d0_dw_0_20250514T084924.hdf5.copied_structured.hdf5"
-#dirpath="processed_np02vd_raw_run036435_0000_df-s04-d0_dw_0_20250514T085249.hdf5.copied_structured.hdf5"
-# RANDOM TRIGGER (Remove PrM fibers cover + temperature monitor light 1500nm off and fibers unplugged and flange covered, camera on with light off, Bi source)
-#dirpath="processed_np02vd_raw_run036445_0000_df-s04-d0_dw_0_20250514T093130.hdf5.copied_structured.hdf5"
-#dirpath="processed_np02vd_raw_run036449_0000_df-s04-d0_dw_0_20250514T094448.hdf5.copied_structured.hdf5"
-#dirpath="processed_np02vd_raw_run036463_0000_df-s04-d0_dw_0_20250514T103210.hdf5.copied_structured.hdf5"
-#dirpath="processed_np02vd_raw_run036457_0000_df-s04-d0_dw_0_20250514T101218.hdf5.copied_structured.hdf5"
-# RANDOM TRIGGER (Manhole not covered)
-#dirpath="processed_np02vd_raw_run036481_0000_df-s04-d0_dw_0_20250515T085932.hdf5.copied_structured.hdf5"
-#dirpath="processed_np02vd_raw_run036482_0000_df-s04-d0_dw_0_20250515T090254.hdf5.copied_structured.hdf5"
-# RANDOM TRIGGER (Manhole covered with copper foil and black blankets)
-#dirpath="processed_np02vd_raw_run036489_0000_df-s04-d0_dw_0_20250515T103041.hdf5.copied_structured.hdf5"
-#dirpath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/precommissioning/check_light_leakage/processed_np02vd_raw_run036498_0000_df-s04-d0_dw_0_20250515T105742.hdf5.copied_structured.hdf5"
-# Random trigger: EHN1 lights off
-#dirpath="processed_np02vd_raw_run036577_0000_df-s04-d0_dw_0_20250519T165114.hdf5.copied_structured.hdf5"
-#dirpath="processed_np02vd_raw_run036578_0000_df-s04-d0_dw_0_20250519T165430.hdf5.copied_structured.hdf5"
-#dirpath="processed_np02vd_raw_run036583_0000_df-s04-d0_dw_0_20250519T180550.hdf5.copied_structured.hdf5"
-#dirpath="processed_np02vd_raw_run036584_0000_df-s04-d0_dw_0_20250519T181700.hdf5.copied_structured.hdf5"
-# July 7 LED calib run
-#dirpath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run037066_membrane/processed_np02vd_raw_run037066_0000_df-s04-d0_dw_0_20250707T145032.hdf5.copied_structured_membrane.hdf5"
 # July 8, cathode no HV, cathode PD modules off, membrane PD modules only
 #dirpath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run037089_membrane/processed_merged_run037089_structured_membrane.hdf5"
 # July 8, cathode no HV, cathode + membrane PD modules ON
@@ -211,18 +138,85 @@ for ich in range(len(channelsofinterest)):
 # July 15: beam +5 GeV, NO cathode PDS, membrane PD only, Beam low cherenkov 2.3 bar (normal should be 4 bar), high cherenkov 14 bar
 #dirpath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run037276_membrane/processed_np02vd_raw_run037276_0000_df-s05-d0_dw_0_20250715T190106.hdf5.copied_structured_membrane.hdf5"
 
-# Cosmic trigger
-# /pnfs/dune/persistent/users/weishi/PDVDNoiseHunt/processed_np02vd_raw_run036401_0000_df-s04-d0_dw_0_20250512T122851.hdf5.copied_structured.hdf5
-#dirpath="processed_np02vd_raw_run036405_0000_df-s04-d0_dw_0_20250513T123222.hdf5.copied_structured.hdf5" - same condition as cosmic run 36362
-#dirpath="processed_np02vd_raw_run036401_0000_df-s04-d0_dw_0_20250512T122851.hdf5.copied_structured.hdf5"
+#####################################
+# common setting for high pass filter
+#####################################
+order = 1
 
-# 2nd beam period Aug 5
-# run 38563, 2 GeV incluide all particles with High Presion Cherenkov off
-#dirpath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run038563_membrane/"
-# run 38564, 2 GeV incluide all particles with the optimal Cherenkov configuration
-dirpath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run038564_membrane/"
-# run 38565, 2 GeV incluide all particles with the optimal Cherenkov configuration
-#dirpath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run038565_membrane/"
+###########################################
+# common setting for Gaussian kernel filter
+###########################################
+sigma = 2 # larger sigma results in more smoothing.
+
+# typical LAr two exponentials
+# normalization will be Rs*taus + Rt*taut
+def LArTwoTimeConstants(t, Rs, taus, Rt, taut):
+    return Rs * np.exp(-1.0*t/taus) + Rt * np.exp(-1.0*t/taut)
+
+# This assumption of only two components and normalize to 1 doesn't necessarily fit
+# has to fit to a normalized shape
+def LArTwoTimeConstantsPDF(t, Rs, taus, taut):
+    return (Rs/taus) * np.exp(-1.0*t/taus) + ((1-Rs)/taut) * np.exp(-1.0*t/taut)
+
+# normalization constant of this func is?
+# R* is A* x tau*
+def LArThreeTimeConstants(t, Rs, taus, Rt, taut, Rrec, taurec): # per Eq. 1 in arXiv: 2507.08887 and Eur. Phys. J. C (2020) 80:303
+    return Rs * np.exp(-1.0*t/taus) + Rt * np.exp(-1.0*t/taut) + Rrec/((1+t/taurec)**2)
+
+def round_to_n_significant_digits(number, n_digits=1):
+    """Rounds a number to n significant digits."""
+    if number == 0:
+        return 0.0
+
+    # Determine the order of magnitude.
+    order_of_magnitude = math.floor(math.log10(abs(number)))
+
+    # Calculate the number of decimal places needed.
+    # We round to the nearest (n_digits) after shifting the decimal point.
+    decimal_places = (n_digits - 1) - order_of_magnitude
+
+    return round(number, decimal_places)
+
+BaselineADCAllWfms = []
+daq_pd_dt = []
+colors = ['b', 'g', 'r', 'c', 'm', 'y', 'k', 'b', 'b', 'g', 'r', 'c', 'm', 'y', 'k']
+
+modules = ["None"] * 100
+
+for ich in range(len(channelsofinterest)):
+    # depends on channel, set at roughly SPE amplitude
+    if channelsofinterest[ich] == 30:
+        modules[channelsofinterest[ich]]= ["M7"]
+    if channelsofinterest[ich] == 10:
+        modules[channelsofinterest[ich]]= ["M8"]
+    if channelsofinterest[ich] == 0:
+        modules[channelsofinterest[ich]]= ["M5"]
+    if channelsofinterest[ich] == 20:
+        modules[channelsofinterest[ich]]= ["M6"]
+    if channelsofinterest[ich] == 41:
+        modules[channelsofinterest[ich]]= ["M4"]
+    if channelsofinterest[ich] == 42:
+        modules[channelsofinterest[ich]]= ["M2"]
+    if channelsofinterest[ich] == 44:
+        modules[channelsofinterest[ich]]= ["M3"]
+    if channelsofinterest[ich] == 45:
+        modules[channelsofinterest[ich]]= ["M1"]
+    if channelsofinterest[ich] == 1:
+        modules[channelsofinterest[ich]]= ["C6"]
+    if channelsofinterest[ich] == 2:
+        modules[channelsofinterest[ich]]= ["C5"]
+    if channelsofinterest[ich] == 4:
+        modules[channelsofinterest[ich]]= ["C8"]
+    if channelsofinterest[ich] == 5:
+        modules[channelsofinterest[ich]]= ["C7"]
+    if channelsofinterest[ich] == 31:
+        modules[channelsofinterest[ich]]= ["C2"]
+    if channelsofinterest[ich] == 32:
+        modules[channelsofinterest[ich]]= ["C1"]
+    if channelsofinterest[ich] == 34:
+        modules[channelsofinterest[ich]]= ["C3"]
+    if channelsofinterest[ich] == 36:
+        modules[channelsofinterest[ich]]= ["C4"]
 
 ############################
 # Load waveforms
@@ -244,11 +238,20 @@ print("tot waveforms from all channels: ", len(wfset.waveforms))
 print("1st wfm attributes: ", vars(wfset.waveforms[0]))
 print("1st wfm adcs: ", wfset.waveforms[0].adcs)
 print("1st wfm number of ticks: ", len(wfset.waveforms[0].adcs))
+if Beamrun == True: print("1st wfm trigger types: ", wfset.waveforms[0].trigger_type_names)
+if Beamrun == True: print("1st wfm trigger type name: ", wfset.waveforms[0].trigger_type_names[0])
 print("1st wfm channel: ", wfset.waveforms[0].channel)
-if avf_wfm_max_tick >= len(wfset.waveforms[0].adcs):
-    print("ERROR: !!! ************************************** !!!")
-    print("ERROR: !!! avf_wfm_max_tick exceeds max wfm ticks !!!")
-    print("ERROR: !!! ************************************** !!!")
+
+avf_wfm_max_tick = len(wfset.waveforms[0].adcs) - filterlength
+avg_wfm          = np.zeros((len(channelsofinterest),avf_wfm_max_tick), dtype=np.float32)
+avg_wfm_HL       = np.zeros((len(channelsofinterest),avf_wfm_max_tick), dtype=np.float32)
+avg_wfm_HLx      = np.zeros((len(channelsofinterest),avf_wfm_max_tick), dtype=np.float32)
+avg_wfm_HxLx     = np.zeros((len(channelsofinterest),avf_wfm_max_tick), dtype=np.float32)
+filter_wfm       = np.zeros((len(channelsofinterest),avf_wfm_max_tick), dtype=np.float32)
+countwfms        = np.zeros((len(channelsofinterest),), dtype=np.int32)
+countwfms_HL     = np.zeros((len(channelsofinterest),), dtype=np.int32)
+countwfms_HLx    = np.zeros((len(channelsofinterest),), dtype=np.int32)
+countwfms_HxLx   = np.zeros((len(channelsofinterest),), dtype=np.int32)
 
 # Outer loop to create sublists
 for ich in range(len(channelsofinterest)):
@@ -260,7 +263,7 @@ daq_trigger_time = []
 count_overlay_plot = 0
 for iwfm in range(len(wfset.waveforms)):
     # get the daq time stamp
-    if count_overlay_plot > 15: break
+    if count_overlay_plot > 5: break
     if wfset.waveforms[iwfm].channel == 30 and abs(wfset.waveforms[iwfm].daq_window_timestamp - wfset.waveforms[iwfm].timestamp) < beam_coincidence_cut:
         # this is the list of events we want to check all channels' wfms together
         daq_trigger_time.append(wfset.waveforms[iwfm].daq_window_timestamp)
@@ -303,7 +306,7 @@ for iwfm in range(len(wfset.waveforms)):
                         xaxis = [x for x in range(len(filter_wfm[ich]))]
                         plt.plot(xaxis, filter_wfm[ich])
 
-                # Overlay raw adc waveforms from same trigger event based on daq time
+                # control plot: Overlay raw adc waveforms from same trigger event based on daq time
                 for idaqtime in range(len(daq_trigger_time)):
                     if wfset.waveforms[iwfm].daq_window_timestamp == daq_trigger_time[idaqtime] and abs(wfset.waveforms[iwfm].daq_window_timestamp - wfset.waveforms[iwfm].timestamp) < beam_coincidence_cut:
                         # multiple wfm from 1 channel can satisfy this condition
@@ -312,7 +315,8 @@ for iwfm in range(len(wfset.waveforms)):
                         xaxis = [x for x in range(len(wfset.waveforms[iwfm].adcs))]
                         plt.plot(xaxis, wfset.waveforms[iwfm].adcs, color=colors[ich], label=[modules[channelsofinterest[ich]]])
 
-                # For membrane modules: requiring PD time stamp and DAQ time stamp within certain range (channel dependent) to make sure it's selecting beam event
+                # MAIN SELECTION
+                # For membrane modules: requiring PD time stamp and DAQ time stamp within certain range to make sure it's selecting beam event
                 #print("Beamrun: ", Beamrun, "abs dt: ", abs(wfset.waveforms[iwfm].daq_window_timestamp - wfset.waveforms[iwfm].timestamp))
                 if (Beamrun == True and abs(wfset.waveforms[iwfm].daq_window_timestamp - wfset.waveforms[iwfm].timestamp) < beam_coincidence_cut) or Beamrun == False:
                     #print("beamtrue: ", iwfm)
@@ -323,9 +327,26 @@ for iwfm in range(len(wfset.waveforms)):
                     countwfms[ich] = countwfms[ich] + 1
                     for itick in range(avf_wfm_max_tick):
                         # sum up wfms for avg later
-                        avg_wfm[ich][itick] += wfset.waveforms[iwfm].filtered[itick] - baseline_ADC
+                        avg_wfm[ich][itick] = avg_wfm[ich][itick] + (wfset.waveforms[iwfm].filtered[itick] - baseline_ADC)
+                    # Here for different particles
+                    if wfset.waveforms[iwfm].trigger_type_names[0]  == 'kCTBBeamChkvHL':
+                        countwfms_HL[ich] = countwfms_HL[ich] + 1
+                        for itick in range(avf_wfm_max_tick):
+                            # typically electron
+                            avg_wfm_HL[ich][itick] = avg_wfm_HL[ich][itick] + (wfset.waveforms[iwfm].filtered[itick] - baseline_ADC)
+                    if wfset.waveforms[iwfm].trigger_type_names[0]  == 'kCTBBeamChkvHLx':
+                        # typically pion
+                        countwfms_HLx[ich] = countwfms_HLx[ich] + 1
+                        for itick in range(avf_wfm_max_tick):
+                            avg_wfm_HLx[ich][itick] = avg_wfm_HLx[ich][itick] + (wfset.waveforms[iwfm].filtered[itick] - baseline_ADC)
+                    if wfset.waveforms[iwfm].trigger_type_names[0]  == 'kCTBBeamChkvHxLx':
+                        # k/proton- need ToF
+                        countwfms_HxLx[ich] = countwfms_HxLx[ich] + 1
+                        for itick in range(avf_wfm_max_tick):
+                            avg_wfm_HxLx[ich][itick] = avg_wfm_HxLx[ich][itick] + (wfset.waveforms[iwfm].filtered[itick] - baseline_ADC)
 
-                    if iwfm < 1000 and plotwfms == True:
+                    # validation plot for selcted evts
+                    if iwfm < 10000 and plotwfms == True:
                         xaxis = [x for x in range(len(wfset.waveforms[iwfm].adcs))]
                         plt.plot(xaxis, wfset.waveforms[iwfm].adcs)
                         plt.savefig("plots/"+str(wfset.waveforms[0].run_number)+"_ch_"+str(channelofinterest)+"wfm_"+str(iwfm)+"_adcs.pdf")
@@ -387,199 +408,351 @@ print("================= Avg Wfm Report =================  ")
 for ich in range(len(channelsofinterest)):
     print("==== module ", modules[channelsofinterest[ich]], " (ch ", channelsofinterest[ich], ") ==== ")
     print("tot wfms for avg: ", countwfms[ich])
+    print("tot wfms for avg - HL: ", countwfms_HL[ich])
+    print("tot wfms for avg - HLx: ", countwfms_HLx[ich])
+    print("tot wfms for avg - HxLx: ", countwfms_HxLx[ich])
     # loop over ticks
     for itick in range(avf_wfm_max_tick):
-        avg_wfm[ich][itick] = avg_wfm[ich][itick]*1.0 / countwfms[ich]
+        if countwfms[ich]>0: avg_wfm[ich][itick] = avg_wfm[ich][itick]*1.0 / countwfms[ich]
+        if countwfms_HL[ich]>0: avg_wfm_HL[ich][itick] = avg_wfm_HL[ich][itick]*1.0 / countwfms_HL[ich]
+        if countwfms_HLx[ich]>0: avg_wfm_HLx[ich][itick] = avg_wfm_HLx[ich][itick]*1.0 / countwfms_HLx[ich]
+        if countwfms_HxLx[ich]>0: avg_wfm_HxLx[ich][itick] = avg_wfm_HxLx[ich][itick]*1.0 / countwfms_HxLx[ich]
 
-
-# subtract basline of avg wfm for deconvolve
+# Subtract basline of avg wfm for deconvolve
 for ich in range(len(channelsofinterest)):
 
-    with open(str(wfset.waveforms[0].run_number)+"_ch_"+str(channelsofinterest[ich])+"_AVG_wfm.txt", "w") as f:
+    # Overall
+    if countwfms[ich]>0:
+        with open(str(wfset.waveforms[0].run_number)+"_ch_"+str(channelsofinterest[ich])+"_AVG_wfm.txt", "w") as f:
 
-        # subtract basline of avg wfm for deconvolve
-        baseline_ADC_avg_wfm = statistics.mean(filter(lambda x: x <= np.percentile(avg_wfm[ich], percentile4baseline), avg_wfm[ich]))
-        print("ch", channelsofinterest[ich], " avg wfm baseline: ", baseline_ADC_avg_wfm)
-        for itick in range(avf_wfm_max_tick):
-            avg_wfm[ich][itick] = avg_wfm[ich][itick] - baseline_ADC_avg_wfm
-            # store avg wfm in txt
-            f.write(str(avg_wfm[ich][itick])+ "\n")
+            # subtract basline of avg wfm for deconvolve
+            baseline_ADC_avg_wfm = statistics.mean(filter(lambda x: x <= np.percentile(avg_wfm[ich], percentile4baseline), avg_wfm[ich]))
+            #print("ch", channelsofinterest[ich], " avg wfm baseline: ", baseline_ADC_avg_wfm)
+            for itick in range(avf_wfm_max_tick):
+                avg_wfm[ich][itick] = avg_wfm[ich][itick] - baseline_ADC_avg_wfm
+                # store avg wfm in txt
+                f.write(str(avg_wfm[ich][itick])+ "\n")
 
-    #####################################
-    # common setting for high pass filter
-    #####################################
+        xaxis = [x for x in range(len(avg_wfm[ich]))]
+        plt.plot(xaxis, avg_wfm[ich], 'blue', label=str(modules[channelsofinterest[ich]]))
+        plt.grid(True)
+        plt.legend()
+        plt.savefig("./"+str(wfset.waveforms[0].run_number)+"_ch_"+str(channelsofinterest[ich])+"_AVG_wfm.pdf")
+        plt.clf() # important to clear figure
+        plt.close()
 
-    cutoff_frequency = 100000 # Hz
-    order = 1
-    sampling_rate = 62500000 # 16ns
+    # HL - typically electron
+    if countwfms_HL[ich]>0:
+        with open(str(wfset.waveforms[0].run_number)+"_ch_"+str(channelsofinterest[ich])+"_AVG_wfm_Cerenkov_HL.txt", "w") as f:
 
-    ###########################################
-    # common setting for Gaussian kernel filter
-    ###########################################
+            # subtract basline of avg wfm for deconvolve
+            baseline_ADC_avg_wfm_HL = statistics.mean(filter(lambda x: x <= np.percentile(avg_wfm_HL[ich], percentile4baseline), avg_wfm_HL[ich]))
+            #print("ch", channelsofinterest[ich], " avg wfm baseline: ", baseline_ADC_avg_wfm)
+            for itick in range(avf_wfm_max_tick):
+                avg_wfm_HL[ich][itick] = avg_wfm_HL[ich][itick] - baseline_ADC_avg_wfm_HL
+                # store avg wfm in txt
+                f.write(str(avg_wfm_HL[ich][itick])+ "\n")
 
-    sigma = 2 # larger sigma results in more smoothing.
+        xaxis = [x for x in range(len(avg_wfm_HL[ich]))]
+        plt.plot(xaxis, avg_wfm_HL[ich], 'blue', label=str(modules[channelsofinterest[ich]]))
+        plt.grid(True)
+        plt.legend()
+        plt.savefig("./"+str(wfset.waveforms[0].run_number)+"_ch_"+str(channelsofinterest[ich])+"_AVG_wfm_Cerenkov_HL.pdf")
+        plt.clf() # important to clear figure
+        plt.close()
 
-    ###########################
-    # Avg wfm further make up
-    ###########################
-    ### add the same high pass filter as the SPE template ###
-    # only filter this tick and after
-    if Beamrun == True:
-        highpassfilter_start_avg_wfm = 64
-    else:
-        highpassfilter_start_avg_wfm = 240
-    sos_avg_wfm = butter(order, cutoff_frequency, 'highpass', fs=sampling_rate, output='sos')
-    avg_wfm_segment_to_high_pass = avg_wfm[ich][highpassfilter_start_avg_wfm:]
-    avg_wfm_segment_high_pass_filtered = sosfiltfilt(sos_avg_wfm, avg_wfm_segment_to_high_pass)
-    # stitch back filtered and not filtered segments
-    avg_wfm_high_pass_filtered = np.copy(avg_wfm[ich])
-    avg_wfm_high_pass_filtered[highpassfilter_start_avg_wfm:] = avg_wfm_segment_high_pass_filtered
-    # and write to txt file
-    with open("ch_"+str(channelsofinterest[ich])+"_AVG_wfm_highpassfiltered"+str(cutoff_frequency)+"Hz.txt", "w") as f:
-        # loop over ticks
-        for itick in range(len(avg_wfm_high_pass_filtered)):
-            # store avg wfm in txt
-            f.write(str(avg_wfm_high_pass_filtered[itick])+ "\n")
+    # HLx - typically pi
+    if countwfms_HLx[ich]>0:
+        with open(str(wfset.waveforms[0].run_number)+"_ch_"+str(channelsofinterest[ich])+"_AVG_wfm_Cerenkov_HLx.txt", "w") as f:
 
-    ### apply Gaussian filter to avg wfm ###
-    avg_wfm_Gauss_filtered = gaussian_filter1d(avg_wfm[ich], sigma=sigma)
-    # and write to txt file
-    with open("ch_"+str(channelsofinterest[ich])+"_AVG_wfm_gaussfiltered.txt", "w") as f:
-        # loop over ticks
-        for itick in range(len(avg_wfm_Gauss_filtered)):
-            # store avg wfm in txt
-            f.write(str(avg_wfm_Gauss_filtered[itick])+ "\n")
+            # subtract basline of avg wfm for deconvolve
+            baseline_ADC_avg_wfm_HLx = statistics.mean(filter(lambda x: x <= np.percentile(avg_wfm_HLx[ich], percentile4baseline), avg_wfm_HLx[ich]))
+            #print("ch", channelsofinterest[ich], " avg wfm baseline: ", baseline_ADC_avg_wfm)
+            for itick in range(avf_wfm_max_tick):
+                avg_wfm_HLx[ich][itick] = avg_wfm_HLx[ich][itick] - baseline_ADC_avg_wfm_HLx
+                # store avg wfm in txt
+                f.write(str(avg_wfm_HLx[ich][itick])+ "\n")
 
-    # plot avg wfm and different makeups
-    xaxis = [x for x in range(len(avg_wfm[ich]))]
-    xaxis_highpassfiltered = [x for x in range(len(avg_wfm_high_pass_filtered))]
-    xaxis_gaussfiltered = [x for x in range(len(avg_wfm_Gauss_filtered))]
-    plt.plot(xaxis, avg_wfm[ich], 'blue', label=str(modules[channelsofinterest[ich]]))
-    plt.plot(xaxis_highpassfiltered, avg_wfm_high_pass_filtered, 'red', label=str(modules[channelsofinterest[ich]])+'- High pass filter: '+str(cutoff_frequency)+'Hz')
-    plt.plot(xaxis_gaussfiltered, avg_wfm_Gauss_filtered, 'green', label=str(modules[channelsofinterest[ich]])+'- Gauss filter')
-    plt.grid(True)
-    plt.legend()
-    plt.savefig("./"+str(wfset.waveforms[0].run_number)+"_ch_"+str(channelsofinterest[ich])+"_AVG_wfm_makeups.pdf")
-    plt.clf() # important to clear figure
-    plt.close()
+        xaxis = [x for x in range(len(avg_wfm_HLx[ich]))]
+        plt.plot(xaxis, avg_wfm_HLx[ich], 'blue', label=str(modules[channelsofinterest[ich]]))
+        plt.grid(True)
+        plt.legend()
+        plt.savefig("./"+str(wfset.waveforms[0].run_number)+"_ch_"+str(channelsofinterest[ich])+"_AVG_wfm_Cerenkov_HLx.pdf")
+        plt.clf() # important to clear figure
+        plt.close()
 
-    ###########################
-    # SPE template make up
-    ###########################
-    spe_response = np.loadtxt("ch"+str(channelsofinterest[ich])+"_avg_spe_waveform.txt", usecols=0)
+    # HxLx - typically k/p
+    if countwfms_HxLx[ich]>0:
+        with open(str(wfset.waveforms[0].run_number)+"_ch_"+str(channelsofinterest[ich])+"_AVG_wfm_Cerenkov_HxLx.txt", "w") as f:
 
-    ### add a high pass filter to reduce the overshoot at the tail ###
-    filter_start = 45 # only filter this tick and after
-    sos = butter(order, cutoff_frequency, 'highpass', fs=sampling_rate, output='sos')
-    spe_segment_to_filter = spe_response[filter_start:]
-    spe_segment_filtered = sosfiltfilt(sos, spe_segment_to_filter)
-    # stitch back filtered and not filtered segments
-    spe_response_high_pass_filtered = np.copy(spe_response)
-    spe_response_high_pass_filtered[filter_start:] = spe_segment_filtered
-    # and write to txt file
-    with open("ch_"+str(channelsofinterest[ich])+"_LED_spe_template_highpassfiltered"+str(cutoff_frequency)+"Hz.txt", "w") as f:
-        # loop over ticks
-        for itick in range(len(spe_response_high_pass_filtered)):
-            # store avg wfm in txt
-            f.write(str(spe_response_high_pass_filtered[itick])+ "\n")
+            # subtract basline of avg wfm for deconvolve
+            baseline_ADC_avg_wfm_HxLx = statistics.mean(filter(lambda x: x <= np.percentile(avg_wfm_HxLx[ich], percentile4baseline), avg_wfm_HxLx[ich]))
+            #print("ch", channelsofinterest[ich], " avg wfm baseline: ", baseline_ADC_avg_wfm)
+            for itick in range(avf_wfm_max_tick):
+                avg_wfm_HxLx[ich][itick] = avg_wfm_HxLx[ich][itick] - baseline_ADC_avg_wfm_HxLx
+                # store avg wfm in txt
+                f.write(str(avg_wfm_HxLx[ich][itick])+ "\n")
 
-    ### moving average to smooth the template ###
-    spe_response_movingavg = np.convolve(spe_response, np.ones(filterlength), 'valid') / filterlength
-    # and write to txt file
-    with open("ch_"+str(channelsofinterest[ich])+"_LED_spe_template_movingavg"+str(filterlength)+"ticks.txt", "w") as f:
-        # loop over ticks
-        for itick in range(len(spe_response_movingavg)):
-            # store avg wfm in txt
-            f.write(str(spe_response_movingavg[itick])+ "\n")
-
-    ### apply Gaussian filter to SPE template ###
-    spe_response_gaussfilterd = gaussian_filter1d(spe_response, sigma=sigma)
-    # and write to txt file
-    with open("ch_"+str(channelsofinterest[ich])+"_LED_spe_template_gaussfiltered.txt", "w") as f:
-        # loop over ticks
-        for itick in range(len(spe_response_gaussfilterd)):
-            # store avg wfm in txt
-            f.write(str(spe_response_gaussfilterd[itick])+ "\n")
-
-    # plot different spe template make up
-    xaxis = [x for x in range(len(spe_response))]
-    xaxis_highpassfiltered = [x for x in range(len(spe_response_high_pass_filtered))]
-    xaxis_movingavg = [x for x in range(len(spe_response_movingavg))]
-    xaxis_gaussfiltered = [x for x in range(len(spe_response_gaussfilterd))]
-    plt.plot(xaxis, spe_response, 'blue', label=str(modules[channelsofinterest[ich]])+' - From Kaixin')
-    plt.plot(xaxis_highpassfiltered, spe_response_high_pass_filtered, 'red', label=str(modules[channelsofinterest[ich]])+'- High pass filter: '+str(cutoff_frequency)+'Hz')
-    plt.plot(xaxis_movingavg, spe_response_movingavg, 'green', label=str(modules[channelsofinterest[ich]])+'- Moving average')
-    plt.plot(xaxis_gaussfiltered, spe_response_gaussfilterd, 'cyan', label=str(modules[channelsofinterest[ich]])+'- Gauss filter')
-    plt.grid(True)
-    plt.legend()
-    plt.savefig("./ch_"+str(channelsofinterest[ich])+"_LED_spe_template_makeup.pdf")
-    plt.clf() # important to clear figure
-    plt.close()
+        xaxis = [x for x in range(len(avg_wfm_HxLx[ich]))]
+        plt.plot(xaxis, avg_wfm_HxLx[ich], 'blue', label=str(modules[channelsofinterest[ich]]))
+        plt.grid(True)
+        plt.legend()
+        plt.savefig("./"+str(wfset.waveforms[0].run_number)+"_ch_"+str(channelsofinterest[ich])+"_AVG_wfm_Cerenkov_HxLx.pdf")
+        plt.clf() # important to clear figure
+        plt.close()
 
     #################
     # Deconvolution
     #################
-    if SPETemplateHighPassFilter == True:
-        spe_template_final = spe_response_high_pass_filtered
-    elif SPETemplateMovingAvg == True:
-        spe_template_final = spe_response_movingavg
-    elif SPETemplateGaussFilter == True:
-        spe_template_final = spe_response_gaussfilterd
-    else:
-        spe_template_final = spe_response
+    spe_response = np.loadtxt("ch"+str(channelsofinterest[ich])+"_avg_spe_waveform.txt", usecols=0)
 
-    if AvgWfmHighPassFilter == True:
-        avg_wfm_final = avg_wfm_high_pass_filtered
-    elif AvgWfmGaussFilter == True:
-        avg_wfm_final = avg_wfm_Gauss_filtered
-    else:
-        avg_wfm_final = avg_wfm[ich]
+    spe_template_final = spe_response
+    avg_wfm_final = avg_wfm[ich]
+    avg_wfm_HL_final = avg_wfm_HL[ich]
+    avg_wfm_HLx_final = avg_wfm_HLx[ich]
+    avg_wfm_HxLx_final = avg_wfm_HxLx[ich]
+
+    # method 1: deconvolve - doesn't work out of box
     #source, remainder = signal.deconvolve(avg_wfm[ich], spe_response)
-    # here the deconvolution
+
+    # method 2: Least square method - works okay but very noisy
     #A = scipy.linalg.convolution_matrix(spe_response, len(avg_wfm[ich]), 'same')
-    A = scipy.linalg.convolution_matrix(spe_template_final, len(avg_wfm_final)+1-len(spe_template_final)) # default full mode
-    source, _, _, _ = scipy.linalg.lstsq(A, avg_wfm_final)
+    #A = scipy.linalg.convolution_matrix(spe_template_final, len(avg_wfm_final)+1-len(spe_template_final)) # default full mode
+    #source, _, _, _ = scipy.linalg.lstsq(A, avg_wfm_final)
+
+    # method 3: fft with frequency cutoff
+    # first pad to same Length
+    # Determine the target length (length of the longer signal)
+    avg_wfm_length = len(avg_wfm_final)
+    avg_wfm_freq = fft(avg_wfm_final)
+    avg_wfm_HL_freq = fft(avg_wfm_HL_final)
+    avg_wfm_HLx_freq = fft(avg_wfm_HLx_final)
+    avg_wfm_HxLx_freq = fft(avg_wfm_HxLx_final)
+
+    # cut high frequency
+    frequencies = fftfreq(avg_wfm_length, 1/sampling_rate)
+    filter_mask = np.abs(frequencies) <= cutoff_frequency_fft
+    # Pad the shorter signal with zeros
+    spe_template_final_padded = np.pad(spe_template_final, (0, avg_wfm_length - len(spe_template_final)), 'constant')
+    spe_template_freq = fft(spe_template_final_padded)
+    # Add a small epsilon to avoid division by zero
+    spe_template_freq_safe = spe_template_freq + 1e-10
+
+    # Apply deconvolution and the cutoff filter
+    if FFTGaussFilter == True:
+        gaussian_filter_freq = np.exp(-0.5 * (frequencies / sigma_freq)**2)
+        source_freq_filtered = (avg_wfm_freq * gaussian_filter_freq / spe_template_freq_safe) * filter_mask
+        source_freq_filtered_HL = (avg_wfm_HL_freq * gaussian_filter_freq / spe_template_freq_safe) * filter_mask
+        source_freq_filtered_HLx = (avg_wfm_HLx_freq * gaussian_filter_freq / spe_template_freq_safe) * filter_mask
+        source_freq_filtered_HxLx = (avg_wfm_HxLx_freq * gaussian_filter_freq / spe_template_freq_safe) * filter_mask
+    else:
+        source_freq_filtered = (avg_wfm_freq / spe_template_freq_safe) * filter_mask
+        source_freq_filtered_HL = (avg_wfm_HL_freq / spe_template_freq_safe) * filter_mask
+        source_freq_filtered_HLx = (avg_wfm_HLx_freq / spe_template_freq_safe) * filter_mask
+        source_freq_filtered_HxLx = (avg_wfm_HxLx_freq / spe_template_freq_safe) * filter_mask
+
+    source = ifft(source_freq_filtered).real #  ifft can have small imaginary components due to numerical precision.
+    source_HL = ifft(source_freq_filtered_HL).real
+    source_HLx = ifft(source_freq_filtered_HLx).real
+    source_HxLx = ifft(source_freq_filtered_HxLx).real
+
+    # plot fft of SPE template
+    plt.plot(frequencies, np.abs(spe_template_freq))
+    plt.title('Frequency Spectrum of the Avg SPE template')
+    plt.xlabel('Frequency (Hz)')
+    plt.ylabel('Amplitude')
+    plt.savefig("./"+str(wfset.waveforms[0].run_number)+"_ch_"+str(channelsofinterest[ich])+"_AVG_SPE_fft.pdf")
+    plt.clf() # important to clear figure
+    plt.close()
+    # plot fft of Gauss filter
+    plt.plot(frequencies, np.abs(gaussian_filter_freq))
+    plt.title('Frequency Spectrum of the Gaussian filter')
+    plt.xlabel('Frequency (Hz)')
+    plt.ylabel('Amplitude')
+    plt.savefig("./"+str(wfset.waveforms[0].run_number)+"_ch_"+str(channelsofinterest[ich])+"_Gaussian_filter_fft.pdf")
+    plt.clf() # important to clear figure
+    plt.close()
+    # plot fft of avg wfm
+    plt.plot(frequencies, np.abs(avg_wfm_freq))
+    plt.title('Frequency Spectrum of the Avg Signal')
+    plt.xlabel('Frequency (Hz)')
+    plt.ylabel('Amplitude')
+    plt.savefig("./"+str(wfset.waveforms[0].run_number)+"_ch_"+str(channelsofinterest[ich])+"_AVG_wfm_fft.pdf")
+    plt.clf() # important to clear figure
+    plt.close()
+    plt.plot(frequencies, np.abs(avg_wfm_HL_freq))
+    plt.title('Frequency Spectrum of the Avg Cerenkov HL Signal')
+    plt.xlabel('Frequency (Hz)')
+    plt.ylabel('Amplitude')
+    plt.savefig("./"+str(wfset.waveforms[0].run_number)+"_ch_"+str(channelsofinterest[ich])+"_AVG_wfm_fft_Cerenkov_HL.pdf")
+    plt.clf() # important to clear figure
+    plt.close()
+    plt.plot(frequencies, np.abs(avg_wfm_HLx_freq))
+    plt.title('Frequency Spectrum of the Avg Cerenkov HLx Signal')
+    plt.xlabel('Frequency (Hz)')
+    plt.ylabel('Amplitude')
+    plt.savefig("./"+str(wfset.waveforms[0].run_number)+"_ch_"+str(channelsofinterest[ich])+"_AVG_wfm_fft_Cerenkov_HLx.pdf")
+    plt.clf() # important to clear figure
+    plt.close()
+    plt.plot(frequencies, np.abs(avg_wfm_HxLx_freq))
+    plt.title('Frequency Spectrum of the Avg Cerenkov HxLx Signal')
+    plt.xlabel('Frequency (Hz)')
+    plt.ylabel('Amplitude')
+    plt.savefig("./"+str(wfset.waveforms[0].run_number)+"_ch_"+str(channelsofinterest[ich])+"_AVG_wfm_fft_Cerenkov_HxLx.pdf")
+    plt.clf() # important to clear figure
+    plt.close()
+    # plot fft of Gauss filter x wfmfft
+    plt.plot(frequencies, np.abs(avg_wfm_freq * gaussian_filter_freq))
+    plt.title('Frequency Spectrum of avg signal x Gaussian filter')
+    plt.xlabel('Frequency (Hz)')
+    plt.ylabel('Amplitude')
+    plt.savefig("./"+str(wfset.waveforms[0].run_number)+"_ch_"+str(channelsofinterest[ich])+"_AVG_wfm_fft_x_Gaussian_filter_fft.pdf")
+    plt.clf() # important to clear figure
+    plt.close()
+    plt.plot(frequencies, np.abs(avg_wfm_HL_freq * gaussian_filter_freq))
+    plt.title('Frequency Spectrum of Avg Cerenkov HL Signal x Gaussian filter')
+    plt.xlabel('Frequency (Hz)')
+    plt.ylabel('Amplitude')
+    plt.savefig("./"+str(wfset.waveforms[0].run_number)+"_ch_"+str(channelsofinterest[ich])+"_AVG_wfm_Cerenkov_HL_fft_x_Gaussian_filter_fft.pdf")
+    plt.clf() # important to clear figure
+    plt.close()
+    plt.plot(frequencies, np.abs(avg_wfm_HLx_freq * gaussian_filter_freq))
+    plt.title('Frequency Spectrum of Avg Cerenkov HLx Signal x Gaussian filter')
+    plt.xlabel('Frequency (Hz)')
+    plt.ylabel('Amplitude')
+    plt.savefig("./"+str(wfset.waveforms[0].run_number)+"_ch_"+str(channelsofinterest[ich])+"_AVG_wfm_Cerenkov_HLx_fft_x_Gaussian_filter_fft.pdf")
+    plt.clf() # important to clear figure
+    plt.close()
+    plt.plot(frequencies, np.abs(avg_wfm_HxLx_freq * gaussian_filter_freq))
+    plt.title('Frequency Spectrum of Avg Cerenkov HxLx Signal x Gaussian filter')
+    plt.xlabel('Frequency (Hz)')
+    plt.ylabel('Amplitude')
+    plt.savefig("./"+str(wfset.waveforms[0].run_number)+"_ch_"+str(channelsofinterest[ich])+"_AVG_wfm_Cerenkov_HxLx_fft_x_Gaussian_filter_fft.pdf")
+    plt.clf() # important to clear figure
+    plt.close()
 
     # plot deconvolved source
     xaxis = [x for x in range(len(source))]
     plt.plot(xaxis, source)
-    plt.savefig("./"+str(wfset.waveforms[0].run_number)+"_ch_"+str(channelsofinterest[ich])+"_light_source.pdf")
+    plt.savefig("./"+str(wfset.waveforms[0].run_number)+"_ch_"+str(channelsofinterest[ich])+"_fft_source_Gaussfilter_"+str(FFTGaussFilter)+".pdf")
+    plt.clf() # important to clear figure
+    plt.close()
+    xaxis = [x for x in range(len(source_HL))]
+    plt.plot(xaxis, source_HL)
+    plt.savefig("./"+str(wfset.waveforms[0].run_number)+"_ch_"+str(channelsofinterest[ich])+"_fft_source_Gaussfilter_"+str(FFTGaussFilter)+"_Cerenkov_HL.pdf")
+    plt.clf() # important to clear figure
+    plt.close()
+    xaxis = [x for x in range(len(source_HLx))]
+    plt.plot(xaxis, source_HLx)
+    plt.savefig("./"+str(wfset.waveforms[0].run_number)+"_ch_"+str(channelsofinterest[ich])+"_fft_source_Gaussfilter_"+str(FFTGaussFilter)+"_Cerenkov_HLx.pdf")
+    plt.clf() # important to clear figure
+    plt.close()
+    xaxis = [x for x in range(len(source_HxLx))]
+    plt.plot(xaxis, source_HxLx)
+    plt.savefig("./"+str(wfset.waveforms[0].run_number)+"_ch_"+str(channelsofinterest[ich])+"_fft_source_Gaussfilter_"+str(FFTGaussFilter)+"_Cerenkov_HxLx.pdf")
     plt.clf() # important to clear figure
     plt.close()
 
     # smooth the deconvolved source
     source_filtered = np.convolve(source, np.ones(filterlength), 'valid') / filterlength
-    print("ch", channelsofinterest[ich], " source filtered: ", source_filtered)
-    with open(str(wfset.waveforms[0].run_number)+"_ch_"+str(channelsofinterest[ich])+"_light_source_smoothed.txt", "w") as f:
+    #print("ch", channelsofinterest[ich], " source filtered: ", source_filtered)
+    with open(str(wfset.waveforms[0].run_number)+"_ch_"+str(channelsofinterest[ich])+"_fft_source_mvavgsmoothed.txt", "w") as f:
         # loop over ticks
         for itick in range(len(source_filtered)):
             # store avg wfm in txt
             f.write(str(source_filtered[itick])+ "\n")
+    # HL trig
+    source_HL_filtered = np.convolve(source_HL, np.ones(filterlength), 'valid') / filterlength
+    with open(str(wfset.waveforms[0].run_number)+"_ch_"+str(channelsofinterest[ich])+"_fft_source_mvavgsmoothed_Cerenkov_HL.txt", "w") as f:
+        for itick in range(len(source_HL_filtered)):
+            f.write(str(source_HL_filtered[itick])+ "\n")
+    # HLx trig
+    source_HLx_filtered = np.convolve(source_HLx, np.ones(filterlength), 'valid') / filterlength
+    with open(str(wfset.waveforms[0].run_number)+"_ch_"+str(channelsofinterest[ich])+"_fft_source_mvavgsmoothed_Cerenkov_HLx.txt", "w") as f:
+        for itick in range(len(source_HLx_filtered)):
+            f.write(str(source_HLx_filtered[itick])+ "\n")
+    # HxLx trig
+    source_HxLx_filtered = np.convolve(source_HxLx, np.ones(filterlength), 'valid') / filterlength
+    with open(str(wfset.waveforms[0].run_number)+"_ch_"+str(channelsofinterest[ich])+"_fft_source_mvavgsmoothed_Cerenkov_HxLx.txt", "w") as f:
+        for itick in range(len(source_HxLx_filtered)):
+            f.write(str(source_HxLx_filtered[itick])+ "\n")
 
     #####################################################
     # Fit with standard two exponentials
     #####################################################
-    xaxis = [x for x in range(len(source_filtered))]
-    print("xaxis:", xaxis)
     if channelsofinterest[ich] == 20:
-        fit_start_tick = 11
+        fit_start_tick = 7
     if channelsofinterest[ich] == 30:
         fit_start_tick = 14
     else:
         fit_start_tick = 14
-    xaxis_fit = xaxis[fit_start_tick:]
-    source_filtered_fit = source_filtered[fit_start_tick:]
-    popt, pcov = curve_fit(LightSrcTProfile, np.array(xaxis_fit), source_filtered_fit, p0=(0.5,20.0,0.2,300.0))
-    Af   = popt[0]
-    tauf = popt[1]
-    As   = popt[2]
-    taus = popt[3]
-    fitresult = LightSrcTProfile(np.array(xaxis_fit), Af, tauf, As, taus)
 
-    # plot filtered source
-    plt.plot(xaxis, source_filtered, label=str(modules[channelsofinterest[ich]])+': run'+str(wfset.waveforms[0].run_number))
-    plt.plot(xaxis_fit, fitresult, 'red', label=f'Fit func = Af * exp(-t/tauf) + As * exp(-t/taus):\n Af={Af:.2f}, tauf={tauf:.1f} [x 16ns], As={As:.2f}, taus={taus:.1f} [x 16ns]')
-    plt.legend()
-    plt.savefig("./"+str(wfset.waveforms[0].run_number)+"_ch_"+str(channelsofinterest[ich])+"_light_source_smoothed_withfit.pdf")
-    plt.clf() # important to clear figure
-    plt.close()
+    xaxis = [x for x in range(len(source_filtered))]
+    #print("xaxis:", xaxis)
+
+    for isource in range(4):
+        if isource == 0:
+            source_filtered_final = source_filtered
+            Cerenkov_status = "ORofAll"
+        if isource == 1:
+            source_filtered_final = source_HL_filtered
+            Cerenkov_status = "HL"
+        if isource == 2:
+            source_filtered_final = source_HLx_filtered
+            Cerenkov_status = "HLx"
+        if isource == 3:
+            source_filtered_final = source_HxLx_filtered
+            Cerenkov_status = "HxLx"
+
+        xaxis_fit = xaxis[fit_start_tick:]
+        source_filtered_fit = source_filtered_final[fit_start_tick:]
+        popt, pcov = curve_fit(LArTwoTimeConstants, np.array(xaxis_fit), source_filtered_fit, p0=(0.5,10.0,0.2,200.0), maxfev=5000)
+        Rs   = popt[0]
+        taus = popt[1]
+        Rt   = popt[2]
+        taut = popt[3]
+        fitresult1 = LArTwoTimeConstants(np.array(xaxis_fit), Rs, taus, Rt, taut)
+        residual1 = source_filtered_fit - fitresult1
+        chi_squared1 = np.sum(residual1**2)
+
+        # plot filtered source
+        plt.plot(xaxis, source_filtered_final, label=str(modules[channelsofinterest[ich]])+': run'+str(wfset.waveforms[0].run_number))
+        plt.plot(xaxis_fit, fitresult1, 'red', label=f'Fit f(t)= Rs * exp(-t/taus) + Rt * exp(-t/taut):\n Rs={round_to_n_significant_digits(Rs,2)}, taus={taus:.2f}, \n Rt={round_to_n_significant_digits(Rt,2)}, taut={taut:.2f} [x 16ns], \n chi2 = {round_to_n_significant_digits(chi_squared1,2)}')
+        plt.legend(loc='upper right')
+        plt.yscale('log')
+        plt.savefig("./"+str(wfset.waveforms[0].run_number)+"_ch_"+str(channelsofinterest[ich])+"_fft_source_mvavgsmoothed_Cerenkov_"+str(Cerenkov_status)+"_fitwith2T.pdf")
+        plt.clf() # important to clear figure
+        plt.close()
+
+        # Report fraction of prompt from the fit (assume 2 components)
+        print("*** Assume 2 exponentials FIT WELL *** ")
+        print("ch ", channelsofinterest[ich], " Cerenkov ", Cerenkov_status, ": A_prompt (abundance) = ", round_to_n_significant_digits((Rs*taus)/((Rs*taus)+(Rt*taut)),2) )
+
+        # Report F_prompt, integrate fit func up to ~6 ticks ~100ns? per PRC 91, 035503 (2015)
+        def FitLArTwoTimeConstants(t):
+            return Rs * np.exp(-1.0*t/taus) + Rt * np.exp(-1.0*t/taut)
+        prompt_integral, prompt_integral_err = quad(FitLArTwoTimeConstants, fit_start_tick, fit_start_tick+6) # integrate 6 ticks
+        tot_integral, tot_integral_err = quad(FitLArTwoTimeConstants, fit_start_tick, avf_wfm_max_tick)
+        print("ch ", channelsofinterest[ich], " Cerenkov ", Cerenkov_status, ": F_prompt (6 ticks) = ", round_to_n_significant_digits(prompt_integral/tot_integral) )
+
+        #####################################################
+        # Fit with three components
+        #####################################################
+        """popt, pcov = curve_fit(LArThreeTimeConstants, np.array(xaxis_fit), source_filtered_fit, p0=(0.5,10.0,0.2,200.0,1.0,4.0), maxfev=5000)
+        Rs   = popt[0]
+        taus = popt[1]
+        Rt   = popt[2]
+        taut = popt[3]
+        Rrec = popt[4]
+        taurec = popt[5]
+        fitresult2 = LArThreeTimeConstants(np.array(xaxis_fit), Rs, taus, Rt, taut, Rrec, taurec)
+        residual2 = source_filtered_fit - fitresult2
+        chi_squared2 = np.sum(residual2**2)
+
+        # plot filtered source
+        plt.plot(xaxis, source_filtered, label=str(modules[channelsofinterest[ich]])+': run'+str(wfset.waveforms[0].run_number))
+        plt.plot(xaxis_fit, fitresult2, 'red', label=f'Fit f(t)= Rs * exp(-t/taus) + Rt * exp(-t/taut) + \n Rrec/(1+t/taurec)^2:\n Rs={round_to_n_significant_digits(Rs,2)}, taus={taus:.2f}, \n Rt={round_to_n_significant_digits(Rt,2)}, taut={taut:.2f}, \n Rrec={round_to_n_significant_digits(Rrec,2)}, taurec={taurec:.2f} [x 16ns], chi2 = {round_to_n_significant_digits(chi_squared2,2)}')
+        plt.legend(loc='upper right')
+        plt.savefig("./"+str(wfset.waveforms[0].run_number)+"_ch_"+str(channelsofinterest[ich])+"_fft_source_smoothed_fitwith3T.pdf")
+        plt.clf() # important to clear figure
+        plt.close()"""
