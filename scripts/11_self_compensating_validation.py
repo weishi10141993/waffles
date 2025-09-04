@@ -27,7 +27,10 @@ channelsofinterest = [32, 33, 30, 31, 34, 35, 36, 37, 0, 2, 1, 3, 5, 7, 4, 6]
 #channelsofinterest = [0, 10] # if quartz window is M8 (10)
 #channelsofinterest = [45, 42, 44, 41] # HD style HPK
 
-TotWfmsToRun = 50000
+TotWfmsToRun = 20000
+# Beam coincidence cathode
+beamcoinstart = 1800
+beamcoinstop = 2000
 # region to find peak adc
 prebeamtrigtick = 1700
 postbeamtrigtick = 2300
@@ -146,19 +149,19 @@ for ich in range(len(channelsofinterest)):
 #dirpath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run039046_cathode/"
 # run 39136, 0.7 GeV, L - 5bar, H - 8bar, Cu target - exists
 #dirpath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run039136_cathode/"
-# run 38930, 1 GeV, L - 4.5bar, H - 14bar, W target - exist
+# run 38930, 1 GeV, L - 4.5bar, H - 14bar, W target - done
 #dirpath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run038930_cathode/"
 # run 39047, 1.5 GeV, L - 4bar, H - 14bar, W target - exists
 #dirpath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run039047_cathode/"
 # run 39030, 2 GeV, L - 2bar, H - 10bar, W target - exist
-#dirpath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run039030_cathode/"
-# run 39105, 2.5 GeV, L - 1.3bar, H - 10bar, W target - exist
+dirpath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run039030_cathode/"
+# run 39105, 2.5 GeV, L - 1.3bar, H - 10bar, W target - done
 #dirpath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run039105_cathode/"
 # run 39007, 3 GeV, L - 1bar, H - 10bar, W target - exists
 #dirpath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run039007_cathode/"
 # run 39106, 4 GeV, L - 0.5bar, H - 8bar, Cu target - exists
 #dirpath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run039106_cathode/"
-# run 39108, 5 GeV, L - 0.25bar, H - 5bar, Cu target - exists
+# run 39108, 5 GeV, L - 0.25bar, H - 5bar, Cu target - done
 #dirpath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run039108_cathode/"
 # run 39183, 8 GeV, L - 0.1b, H - 1b, W target - exists
 #dirpath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run039183_cathode/"
@@ -191,7 +194,7 @@ for ich in range(len(channelsofinterest)):
 # run 39031, 2 GeV, L - 2bar, H - 10bar, W target  - (K)+P
 #dirpath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run039031_cathode/"
 # run 39006, 3 GeV, L - 1bar, H - 10bar, W target  - mostly P (+2% K)
-dirpath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run039006_cathode/"
+#dirpath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run039006_cathode/"
 
 
 #----------------------------------------------------------------------------------------------------------------------------------------
@@ -322,7 +325,7 @@ for iwfm in range(TotWfmsToRun):
         plt.close()
 
 dt_allwfms = [(x) for x in daq_pd_dt]
-plt.hist(dt_allwfms, range=(0,2500), bins=500, log=True)
+plt.hist(dt_allwfms, bins=500, log=True)
 plt.xlabel('|t_daq - t_pd|')
 plt.draw()
 plt.savefig("./dt_"+str(wfset.waveforms[0].run_number)+"_zoomin.pdf")
@@ -330,7 +333,7 @@ plt.clf() # important to clear figure
 plt.close()
 
 pe_amp_allcathode = [(x) for x in PE_peak]
-plt.hist(pe_amp_allcathode, range=(0,4000), bins=20, log=True)
+plt.hist(pe_amp_allcathode, bins=20, log=True)
 plt.xlabel('PE (amplitude)')
 plt.draw()
 plt.savefig("./PE_peak_per_wfm_"+str(wfset.waveforms[0].run_number)+".pdf")
@@ -338,7 +341,7 @@ plt.clf() # important to clear figure
 plt.close()
 
 pe_charge_allcathode = [(x) for x in PE_charge]
-plt.hist(pe_charge_allcathode, range=(0,18000), bins=20, log=True)
+plt.hist(pe_charge_allcathode, bins=20, log=True)
 plt.xlabel('PE (charge)')
 plt.draw()
 plt.savefig("./PE_charge_per_wfm_"+str(wfset.waveforms[0].run_number)+".pdf")
@@ -353,7 +356,7 @@ for iwfm in range(TotWfmsToRun):
     #print("iwfm:", iwfm, "daqtime index:", index)
 
     # SELECT BEAM COINCIDENCE
-    if abs(wfset.waveforms[iwfm].daq_window_timestamp - wfset.waveforms[iwfm].timestamp) < 2000 and abs(wfset.waveforms[iwfm].daq_window_timestamp - wfset.waveforms[iwfm].timestamp) > 1750:
+    if abs(wfset.waveforms[iwfm].daq_window_timestamp - wfset.waveforms[iwfm].timestamp) < beamcoinstop and abs(wfset.waveforms[iwfm].daq_window_timestamp - wfset.waveforms[iwfm].timestamp) > beamcoinstart:
 
         if wfset.waveforms[iwfm].trigger_type_names[0]  == 'kCTBBeamChkvHL':
             # typically electron
@@ -387,111 +390,174 @@ for idaq in range(len(daqstamps)):
         if HxLxPE_peak[idaq] != 0: final_HxLxPE_peak.append(HxLxPE_peak[idaq])
 
         if HLPE_charge[idaq] != 0: final_HLPE_charge.append(HLPE_charge[idaq])
-        if HLxPE_charge[idaq] != 0: final_HLxPE_charge.append(HLxPE_peak[idaq])
-        if HxLxPE_charge[idaq] != 0: final_HxLxPE_charge.append(HxLxPE_peak[idaq])
+        if HLxPE_charge[idaq] != 0: final_HLxPE_charge.append(HLxPE_charge[idaq])
+        if HxLxPE_charge[idaq] != 0: final_HxLxPE_charge.append(HxLxPE_charge[idaq])
 
 
 print(" === FINAL REPORT === ")
 
 HLPE_peak_tot = [(x) for x in final_HLPE_peak] # also need to require each channel present
 if len(HLPE_peak_tot) > 0:
-    counts, bins, _ = plt.hist(HLPE_peak_tot, range=(0,20000), bins=100)
-    bin_centers = (bins[:-1] + bins[1:]) / 2
-    params, covariance = curve_fit(gaussian, bin_centers, counts, p0=(np.max(counts), statistics.mode(HLPE_peak_tot), np.std(HLPE_peak_tot)/2), maxfev=1000)
-    amplitude_fit, mean_fit, std_dev_fit = params
-    print("HLPE_peak_mean: ", mean_fit)
-    print("HLPE_peak_std: ", std_dev_fit)
-    fitfunc = gaussian(bin_centers, amplitude_fit, mean_fit, std_dev_fit)
-    #plt.hist(HLPE_peak_tot, range=(0,20000), bins=100)
+    counts, bins, _ = plt.hist(HLPE_peak_tot, bins=100)
     plt.draw()
-    plt.plot(bin_centers, fitfunc, 'red', label='Gaussian fit')
     plt.xlabel('HL trig PE (amplitude)')
     plt.savefig("./HL_totPE_"+str(wfset.waveforms[0].run_number)+"_adcAmplitude.pdf")
     plt.clf() # important to clear figure
     plt.close()
 
+    try:
+        bin_centers = (bins[:-1] + bins[1:]) / 2
+        params, covariance = curve_fit(gaussian, bin_centers, counts, p0=(np.max(counts), statistics.mode(HLPE_peak_tot), np.std(HLPE_peak_tot)/2), maxfev=1000)
+        amplitude_fit, mean_fit, std_dev_fit = params
+        print("HLPE_peak_fit_mean: ", mean_fit)
+        print("HLPE_peak_fit_std: ", std_dev_fit)
+        fitfunc = gaussian(bin_centers, amplitude_fit, mean_fit, std_dev_fit)
+        plt.hist(HLPE_peak_tot, bins=100)
+        plt.plot(bin_centers, fitfunc, 'red', label='Gaussian fit')
+        plt.savefig("./HL_totPE_"+str(wfset.waveforms[0].run_number)+"_adcAmplitude_withfit.pdf")
+        plt.clf() # important to clear figure
+        plt.close()
+    except RuntimeError as e:
+        print(f"Fit failed for good data: {e}")
+
+    print("HLPE_peak_hist_mean: ", np.mean(HLPE_peak_tot))
+    print("HLPE_peak_hist_std: ", np.std(HLPE_peak_tot))
+
 HLxPE_peak_tot = [(x) for x in final_HLxPE_peak]
 if len(HLxPE_peak_tot) > 0:
-    counts, bins, _ = plt.hist(HLxPE_peak_tot, range=(0,20000), bins=100)
-    bin_centers = (bins[:-1] + bins[1:]) / 2
-    params, covariance = curve_fit(gaussian, bin_centers, counts, p0=(np.max(counts), statistics.mode(HLxPE_peak_tot), np.std(HLxPE_peak_tot)/2), maxfev=1000)
-    amplitude_fit, mean_fit, std_dev_fit = params
-    print("HLxPE_peak_mean: ", mean_fit)
-    print("HLxPE_peak_std: ", std_dev_fit)
-    fitfunc = gaussian(bin_centers, amplitude_fit, mean_fit, std_dev_fit)
-    #plt.hist(HLxPE_peak_tot, range=(0,20000), bins=100)
+    counts, bins, _ = plt.hist(HLxPE_peak_tot, bins=100)
     plt.draw()
-    plt.plot(bin_centers, fitfunc, 'red', label='Gaussian fit')
     plt.xlabel('HLx trig PE (amplitude)')
     plt.savefig("./HLx_totPE_"+str(wfset.waveforms[0].run_number)+"_adcAmplitude.pdf")
     plt.clf() # important to clear figure
     plt.close()
 
+    try:
+        bin_centers = (bins[:-1] + bins[1:]) / 2
+        params, covariance = curve_fit(gaussian, bin_centers, counts, p0=(np.max(counts), statistics.mode(HLxPE_peak_tot), np.std(HLxPE_peak_tot)/2), maxfev=1000)
+        amplitude_fit, mean_fit, std_dev_fit = params
+        print("HLxPE_peak_fit_mean: ", mean_fit)
+        print("HLxPE_peak_fit_std: ", std_dev_fit)
+        fitfunc = gaussian(bin_centers, amplitude_fit, mean_fit, std_dev_fit)
+        plt.hist(HLxPE_peak_tot, bins=100)
+        plt.plot(bin_centers, fitfunc, 'red', label='Gaussian fit')
+        plt.savefig("./HLx_totPE_"+str(wfset.waveforms[0].run_number)+"_adcAmplitude_withfit.pdf")
+        plt.clf() # important to clear figure
+        plt.close()
+    except RuntimeError as e:
+        print(f"Fit failed for good data: {e}")
+
+    print("HLxPE_peak_hist_mean: ", np.mean(HLxPE_peak_tot))
+    print("HLxPE_peak_hist_std: ", np.std(HLxPE_peak_tot))
+
 HxLxPE_peak_tot = [(x) for x in final_HxLxPE_peak]
 if len(HxLxPE_peak_tot) > 0:
-    counts, bins, _ = plt.hist(HxLxPE_peak_tot, range=(0,20000), bins=100)
-    bin_centers = (bins[:-1] + bins[1:]) / 2
-    params, covariance = curve_fit(gaussian, bin_centers, counts, p0=(np.max(counts), statistics.mode(HxLxPE_peak_tot), np.std(HxLxPE_peak_tot)/2), maxfev=1000)
-    amplitude_fit, mean_fit, std_dev_fit = params
-    print("HxLxPE_peak_mean: ", mean_fit)
-    print("HxLxPE_peak_std: ", std_dev_fit)
-    fitfunc = gaussian(bin_centers, amplitude_fit, mean_fit, std_dev_fit)
-    #plt.hist(HxLxPE_peak_tot, range=(0,20000), bins=100)
+    counts, bins, _ = plt.hist(HxLxPE_peak_tot, bins=100)
     plt.draw()
-    plt.plot(bin_centers, fitfunc, 'red', label='Gaussian fit')
     plt.xlabel('HxLx trig PE (amplitude)')
     plt.savefig("./HxLx_totPE_"+str(wfset.waveforms[0].run_number)+"_adcAmplitude.pdf")
     plt.clf() # important to clear figure
     plt.close()
 
+    try:
+        bin_centers = (bins[:-1] + bins[1:]) / 2
+        params, covariance = curve_fit(gaussian, bin_centers, counts, p0=(np.max(counts), statistics.mode(HxLxPE_peak_tot), np.std(HxLxPE_peak_tot)/2), maxfev=1000)
+        amplitude_fit, mean_fit, std_dev_fit = params
+        print("HxLxPE_peak_fit_mean: ", mean_fit)
+        print("HxLxPE_peak_fit_std: ", std_dev_fit)
+        fitfunc = gaussian(bin_centers, amplitude_fit, mean_fit, std_dev_fit)
+        plt.hist(HxLxPE_peak_tot, bins=100)
+        plt.plot(bin_centers, fitfunc, 'red', label='Gaussian fit')
+        plt.savefig("./HxLx_totPE_"+str(wfset.waveforms[0].run_number)+"_adcAmplitude_withfit.pdf")
+        plt.clf() # important to clear figure
+        plt.close()
+    except RuntimeError as e:
+        print(f"Fit failed for good data: {e}")
+
+    print("HxLxPE_peak_hist_mean: ", np.mean(HxLxPE_peak_tot))
+    print("HxLxPE_peak_hist_std: ", np.std(HxLxPE_peak_tot))
+
 HLPE_charge_tot = [(x) for x in final_HLPE_charge] # also need to require each channel present
 if len(HLPE_charge_tot) > 0:
-    counts, bins, _ = plt.hist(HLPE_charge_tot, range=(0,100000), bins=100)
-    bin_centers = (bins[:-1] + bins[1:]) / 2
-    params, covariance = curve_fit(gaussian, bin_centers, counts, p0=(np.max(counts), statistics.mode(HLPE_charge_tot), np.std(HLPE_charge_tot)/2), maxfev=1000)
-    amplitude_fit, mean_fit, std_dev_fit = params
-    print("HLPE_charge_mean: ", mean_fit)
-    print("HLPE_charge_std: ", std_dev_fit)
-    fitfunc = gaussian(bin_centers, amplitude_fit, mean_fit, std_dev_fit)
-    #plt.hist(HLPE_charge_tot, range=(0,100000), bins=100)
+    counts, bins, _ = plt.hist(HLPE_charge_tot, bins=100)
     plt.draw()
-    plt.plot(bin_centers, fitfunc, 'red', label='Gaussian fit')
     plt.xlabel('HL trig PE (charge)')
     plt.savefig("./HL_totPE_"+str(wfset.waveforms[0].run_number)+"_IntegrateQ.pdf")
     plt.clf() # important to clear figure
     plt.close()
 
+    try:
+        bin_centers = (bins[:-1] + bins[1:]) / 2
+        #params, covariance = curve_fit(gaussian, bin_centers, counts, p0=(np.max(counts), statistics.mode(HLPE_charge_tot), np.std(HLPE_charge_tot)/2), maxfev=1000)
+        params, covariance = curve_fit(gaussian, bin_centers, counts, p0=(np.max(counts), 130000, 50000), maxfev=5000)
+        amplitude_fit, mean_fit, std_dev_fit = params
+        print("HLPE_charge_fit_mean: ", mean_fit)
+        print("HLPE_charge_fit_std: ", std_dev_fit)
+        fitfunc = gaussian(bin_centers, amplitude_fit, mean_fit, std_dev_fit)
+        plt.hist(HLPE_charge_tot, bins=100)
+        plt.plot(bin_centers, fitfunc, 'red', label='Gaussian fit')
+        plt.savefig("./HL_totPE_"+str(wfset.waveforms[0].run_number)+"_IntegrateQ_withfit.pdf")
+        plt.clf() # important to clear figure
+        plt.close()
+    except RuntimeError as e:
+        print(f"Fit failed for good data: {e}")
+
+    print("HLPE_charge_hist_mean: ", np.mean(HLPE_charge_tot))
+    print("HLPE_charge_hist_std: ", np.std(HLPE_charge_tot))
+
 
 HLxPE_charge_tot = [(x) for x in final_HLxPE_charge]
 if len(HLxPE_charge_tot) > 0:
-    counts, bins, _ = plt.hist(HLxPE_charge_tot, range=(0,100000), bins=100)
-    bin_centers = (bins[:-1] + bins[1:]) / 2
-    params, covariance = curve_fit(gaussian, bin_centers, counts, p0=(np.max(counts), statistics.mode(HLxPE_charge_tot), np.std(HLxPE_charge_tot)/2), maxfev=1000)
-    amplitude_fit, mean_fit, std_dev_fit = params
-    print("HLxPE_charge_mean: ", mean_fit)
-    print("HLxPE_charge_std: ", std_dev_fit)
-    fitfunc = gaussian(bin_centers, amplitude_fit, mean_fit, std_dev_fit)
-    #plt.hist(HLxPE_charge_tot, range=(0,100000), bins=100)
+    counts, bins, _ = plt.hist(HLxPE_charge_tot, bins=100)
     plt.draw()
-    plt.plot(bin_centers, fitfunc, 'red', label='Gaussian fit')
     plt.xlabel('HLx trig PE (charge)')
     plt.savefig("./HLx_totPE_"+str(wfset.waveforms[0].run_number)+"_IntegrateQ.pdf")
     plt.clf() # important to clear figure
     plt.close()
 
+    try:
+        bin_centers = (bins[:-1] + bins[1:]) / 2
+        params, covariance = curve_fit(gaussian, bin_centers, counts, p0=(np.max(counts), statistics.mode(HLxPE_charge_tot), np.std(HLxPE_charge_tot)/2), maxfev=1000)
+        #params, covariance = curve_fit(gaussian, bin_centers, counts, p0=(40, 250000, 40000), maxfev=5000)
+        amplitude_fit, mean_fit, std_dev_fit = params
+        print("HLxPE_charge_fit_mean: ", mean_fit)
+        print("HLxPE_charge_fit_std: ", std_dev_fit)
+        fitfunc = gaussian(bin_centers, amplitude_fit, mean_fit, std_dev_fit)
+        plt.hist(HLxPE_charge_tot, bins=100)
+        plt.plot(bin_centers, fitfunc, 'red', label='Gaussian fit')
+        plt.savefig("./HLx_totPE_"+str(wfset.waveforms[0].run_number)+"_IntegrateQ_withfit.pdf")
+        plt.clf() # important to clear figure
+        plt.close()
+    except RuntimeError as e:
+        print(f"Fit failed for good data: {e}")
+
+    print("HLxPE_charge_hist_mean: ", np.mean(HLxPE_charge_tot))
+    print("HLxPE_charge_hist_std: ", np.std(HLxPE_charge_tot))
+
 HxLxPE_charge_tot = [(x) for x in final_HxLxPE_charge] # also need to require each channel present
 if len(HxLxPE_charge_tot) > 0:
-    counts, bins, _ = plt.hist(HxLxPE_charge_tot, range=(0,100000), bins=100)
-    bin_centers = (bins[:-1] + bins[1:]) / 2
-    params, covariance = curve_fit(gaussian, bin_centers, counts, p0=(np.max(counts), statistics.mode(HxLxPE_charge_tot), np.std(HxLxPE_charge_tot)/2), maxfev=1000)
-    amplitude_fit, mean_fit, std_dev_fit = params
-    print("HxLxPE_charge_mean: ", mean_fit)
-    print("HxLxPE_charge_std: ", std_dev_fit)
-    fitfunc = gaussian(bin_centers, amplitude_fit, mean_fit, std_dev_fit)
-    #plt.hist(HxLxPE_charge_tot, range=(0,100000), bins=100)
+    counts, bins, _ = plt.hist(HxLxPE_charge_tot, bins=100)
     plt.draw()
-    plt.plot(bin_centers, fitfunc, 'red', label='Gaussian fit')
     plt.xlabel('HxLx trig PE (charge)')
     plt.savefig("./HxLx_totPE_"+str(wfset.waveforms[0].run_number)+"_IntegrateQ.pdf")
     plt.clf() # important to clear figure
     plt.close()
+
+    try:
+        bin_centers = (bins[:-1] + bins[1:]) / 2
+        params, covariance = curve_fit(gaussian, bin_centers, counts, p0=(np.max(counts), statistics.mode(HxLxPE_charge_tot), np.std(HxLxPE_charge_tot)/2), maxfev=1000)
+        #params, covariance = curve_fit(gaussian, bin_centers, counts, p0=(np.max(counts), 175000, 50000), maxfev=5000)
+        amplitude_fit, mean_fit, std_dev_fit = params
+        print("HxLxPE_charge_fit_mean: ", mean_fit)
+        print("HxLxPE_charge_fit_std: ", std_dev_fit)
+        fitfunc = gaussian(bin_centers, amplitude_fit, mean_fit, std_dev_fit)
+        plt.hist(HxLxPE_charge_tot, bins=100)
+        plt.plot(bin_centers, fitfunc, 'red', label='Gaussian fit')
+        plt.savefig("./HxLx_totPE_"+str(wfset.waveforms[0].run_number)+"_IntegrateQ_withfit.pdf")
+        plt.clf() # important to clear figure
+        plt.close()
+    except RuntimeError as e:
+        print(f"Fit failed for good data: {e}")
+
+    print("HxLxPE_charge_hist_mean: ", np.mean(HxLxPE_charge_tot))
+    print("HxLxPE_charge_hist_std: ", np.std(HxLxPE_charge_tot))
