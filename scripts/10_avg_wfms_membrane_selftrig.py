@@ -291,7 +291,7 @@ for iwfm in range(len(wfset.waveforms)):
                 # use average from certain lowest percentile
                 # need x <= since in some wfms has same adcs
                 baseline_ADC = statistics.mean(filter(lambda x: x <= np.percentile(wfset.waveforms[iwfm].filtered, percentile4baseline), wfset.waveforms[iwfm].filtered))
-                peak_adc = statistics.mode(wfset.waveforms[iwfm].filtered)
+                peak_adc = statistics.mode(wfset.waveforms[iwfm].filtered) # CAUTION !!! - this looks for saturated wfm, so mode is used, in principle should use np.max
 
                 # control plot
                 daq_pd_dt[ich].append(abs(wfset.waveforms[iwfm].daq_window_timestamp - wfset.waveforms[iwfm].timestamp))
