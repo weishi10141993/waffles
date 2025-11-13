@@ -15,6 +15,7 @@ import glob
 import os
 import math
 import csv
+from collections import Counter
 
 from waffles.input_output.hdf5_structured import load_structured_waveformset
 from waffles.data_classes.WaveformSet import WaveformSet
@@ -36,9 +37,9 @@ beamcoinstart = 1800
 beamcoinstop = 2000
 # region to find peak adc
 prebeamtrigtick = 1700
-postbeamtrigtick = 2300
+postbeamtrigtick = 2400 # if saturated more than this, you can't recover charge under ToT
 checkToT_start = 1700
-checkToT_end = 4000
+checkToT_end = 2400
 peakadccut_max = 14000
 peakadccut_min = 8000
 beam_coincidence_cut = 20 # pd ticks
@@ -47,14 +48,14 @@ filterlength = 10
 percentile4baseline = 10
 tick_2_ns = 16
 plotwfms = False
-plotpersistence = False
+plotpersistence = True
 
-nadcthrs = 15 # number of ADC thresholds
+nadcthrs = 30 # number of ADC thresholds
 countToT = np.zeros((len(channelsofinterest),nadcthrs), dtype=np.int32) # number of time ticks above a certain threshold, per tick 16ns
 ThresholdStep = np.zeros((nadcthrs,), dtype=np.int32) # 100 adc ~ 10PE step, 3500 - 35 step
 ThresholdStep[0] = 2000 # if this is hitting 1000, you have noise effect
 for ithres in range(1, nadcthrs):
-    ThresholdStep[ithres] = ThresholdStep[ithres-1] + 1000
+    ThresholdStep[ithres] = ThresholdStep[ithres-1] + 500
 
 ##################################
 # 3rd beam period Aug 22
@@ -63,12 +64,11 @@ for ithres in range(1, nadcthrs):
 # Pure electrons: all ask for HL trig
 #++++++++++++++++++++++++++++++++++++
 # run 39183, 8 GeV, L - 0.1b, H - 1b, W target - exists
-dirpath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run039183_cathode/"
+#dirpath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run039183_cathode/"
 # run 39108, 5 GeV, L - 0.25bar, H - 5bar, Cu target - done
-#dirpath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run039108_cathode/"
+dirpath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run039108_cathode/"
 
 BaselineADCAllWfms = []
-daq_pd_dt = []
 colors = ['b', 'g', 'r', 'c', 'm', 'y', 'k', 'b', 'b', 'g', 'r', 'c', 'm', 'y', 'k']
 
 modules = ["None"] * 100
@@ -142,20 +142,15 @@ countwfms        = np.zeros((len(channelsofinterest),), dtype=np.int32)
 countwfms_HL     = np.zeros((len(channelsofinterest),), dtype=np.int32)
 countwfms_HLx    = np.zeros((len(channelsofinterest),), dtype=np.int32)
 countwfms_HxLx   = np.zeros((len(channelsofinterest),), dtype=np.int32)
+mode_value_max_count = np.zeros((len(channelsofinterest),), dtype=np.int32)
 ToT_start        = np.zeros((nadcthrs,), dtype=np.int32)
 ToT_stop         = np.zeros((nadcthrs,), dtype=np.int32)
 ToT              = np.zeros((nadcthrs,), dtype=np.int32)
 QoT              = np.zeros((nadcthrs,), dtype=np.float32)
 
-# Outer loop to create sublists
-for ich in range(len(channelsofinterest)):
-    # Append sublists
-    daq_pd_dt.append([ich] * 0)
-
-
 # Main loop
 #for iwfm in range(len(wfset.waveforms)):
-for iwfm in range(80000):
+for iwfm in range(40000):
 #for iwfm in range(1000):
 
         if iwfm % 10000 == 0:
@@ -171,6 +166,7 @@ for iwfm in range(80000):
                 baseline_ADC = 0
                 peak_adc = 0
                 peak_mode_adc = 0
+
                 # smooth it out
                 wfset.waveforms[iwfm].filtered = np.convolve(wfset.waveforms[iwfm].adcs, np.ones(filterlength), 'valid') / filterlength
                 # use the mode of adcs of a wfm as baseline
@@ -179,25 +175,41 @@ for iwfm in range(80000):
                 # need x <= since in some wfms has same adcs
                 baseline_ADC = statistics.mean(filter(lambda x: x <= np.percentile(wfset.waveforms[iwfm].filtered, percentile4baseline), wfset.waveforms[iwfm].filtered))
 
-                # control plot
-                daq_pd_dt[ich].append(abs(wfset.waveforms[iwfm].daq_window_timestamp - wfset.waveforms[iwfm].timestamp))
+                for itick in range(avf_wfm_max_tick):
+                    bslin_subtracted_filtered_wfm[ich][itick] = wfset.waveforms[iwfm].filtered[itick] - baseline_ADC
+
+                peak_adc = np.max(bslin_subtracted_filtered_wfm[ich][prebeamtrigtick:postbeamtrigtick])
+                peak_mode_adc = statistics.mode(bslin_subtracted_filtered_wfm[ich][prebeamtrigtick:postbeamtrigtick]) # check for saturation
+                # Create a Counter object
+                counts = Counter(bslin_subtracted_filtered_wfm[ich][prebeamtrigtick:postbeamtrigtick])
+                # Find the most common element(s) and their counts
+                # most_common(1) returns a list of tuples: [(element, count)]
+                most_common_element = counts.most_common(1)[0]
+
+                mode_value = most_common_element[0]
+                mode_count = most_common_element[1]
+
+                if peak_mode_adc != mode_value:
+                    print("WARNING: statistics.mode returns a different mode to Counter")
+                    print("statistics.mode:", peak_mode_adc)
+                    print("Counter mode", mode_value)
 
                 # control plot: overlay wfms
                 if plotpersistence == True:
-                    for itick in range(avf_wfm_max_tick):
-                        bslin_subtracted_filtered_wfm[ich][itick] = wfset.waveforms[iwfm].filtered[itick] - baseline_ADC
-
-                    peak_adc = np.max(bslin_subtracted_filtered_wfm[ich][prebeamtrigtick:postbeamtrigtick])
-                    peak_mode_adc = statistics.mode(bslin_subtracted_filtered_wfm[ich][prebeamtrigtick:postbeamtrigtick]) # check for saturation
-
-                    plt.figure(channelofinterest)
-                    if peak_adc > peakadccut_min and peak_adc < peakadccut_max and peak_adc != peak_mode_adc:
+                    plt.figure("bigunsaturated"+str(channelofinterest))
+                    if peak_adc > peakadccut_min and peak_adc < peakadccut_max and peak_adc != peak_mode_adc: # if peak equals mode, it's saturated
                         xaxis = [x for x in range(len(bslin_subtracted_filtered_wfm[ich]))]
                         plt.plot(xaxis, bslin_subtracted_filtered_wfm[ich])
 
+                    plt.figure("supersaturated"+str(channelofinterest))
+                    if peak_adc == peak_mode_adc and peak_adc > peakadccut_min: # saturated
+                        if mode_count > mode_value_max_count[ich]: # only keep larger saturation
+                            mode_value_max_count[ich] = mode_count
+                            xaxis = [x for x in range(len(bslin_subtracted_filtered_wfm[ich]))]
+                            plt.plot(xaxis, bslin_subtracted_filtered_wfm[ich])
+
                 # MAIN SELECTION For cathode modules
-                #if abs(wfset.waveforms[iwfm].daq_window_timestamp - wfset.waveforms[iwfm].timestamp) < beamcoinstop and abs(wfset.waveforms[iwfm].daq_window_timestamp - wfset.waveforms[iwfm].timestamp) > beamcoinstart and peak_adc > peakadccut_min and peak_adc < peakadccut_max:
-                if peak_adc > peakadccut_min and peak_adc < peakadccut_max and peak_adc != peak_mode_adc: # do not look for beam coincidence ToT doesn't care as long as it gives some wfm
+                if abs(wfset.waveforms[iwfm].daq_window_timestamp - wfset.waveforms[iwfm].timestamp) < beamcoinstop and abs(wfset.waveforms[iwfm].daq_window_timestamp - wfset.waveforms[iwfm].timestamp) > beamcoinstart and peak_adc > peakadccut_min and peak_adc < peakadccut_max and peak_adc != peak_mode_adc:
                     #print("beamtrue: ", iwfm)
 
                     # Fill baseline ADC of all waveforms in the data (a distribution of baselines)
@@ -206,25 +218,26 @@ for iwfm in range(80000):
                     countwfms[ich] = countwfms[ich] + 1
                     for itick in range(avf_wfm_max_tick):
                         # sum up wfms for avg later
-                        avg_wfm[ich][itick] = avg_wfm[ich][itick] + (wfset.waveforms[iwfm].filtered[itick] - baseline_ADC)
+                        avg_wfm[ich][itick] = avg_wfm[ich][itick] + bslin_subtracted_filtered_wfm[ich][itick]
+                        # typically electron
+                        if wfset.waveforms[iwfm].trigger_type_names[0]  == 'kCTBBeamChkvHL':
+                            avg_wfm_HL[ich][itick] = avg_wfm_HL[ich][itick] + bslin_subtracted_filtered_wfm[ich][itick]
+                        if wfset.waveforms[iwfm].trigger_type_names[0]  == 'kCTBBeamChkvHLx':
+                            # typically pion
+                            avg_wfm_HLx[ich][itick] = avg_wfm_HLx[ich][itick] + bslin_subtracted_filtered_wfm[ich][itick]
+                        if wfset.waveforms[iwfm].trigger_type_names[0]  == 'kCTBBeamChkvHxLx':
+                            avg_wfm_HxLx[ich][itick] = avg_wfm_HxLx[ich][itick] + bslin_subtracted_filtered_wfm[ich][itick]
                     # Here for different particles
                     if wfset.waveforms[iwfm].trigger_type_names[0]  == 'kCTBBeamChkvHL':
                         countwfms_HL[ich] = countwfms_HL[ich] + 1
-                        for itick in range(avf_wfm_max_tick):
-                            # typically electron
-                            avg_wfm_HL[ich][itick] = avg_wfm_HL[ich][itick] + (wfset.waveforms[iwfm].filtered[itick] - baseline_ADC)
                     if wfset.waveforms[iwfm].trigger_type_names[0]  == 'kCTBBeamChkvHLx':
                         # typically pion
                         countwfms_HLx[ich] = countwfms_HLx[ich] + 1
-                        for itick in range(avf_wfm_max_tick):
-                            avg_wfm_HLx[ich][itick] = avg_wfm_HLx[ich][itick] + (wfset.waveforms[iwfm].filtered[itick] - baseline_ADC)
                     if wfset.waveforms[iwfm].trigger_type_names[0]  == 'kCTBBeamChkvHxLx':
                         # k/proton- need ToF
                         countwfms_HxLx[ich] = countwfms_HxLx[ich] + 1
-                        for itick in range(avf_wfm_max_tick):
-                            avg_wfm_HxLx[ich][itick] = avg_wfm_HxLx[ich][itick] + (wfset.waveforms[iwfm].filtered[itick] - baseline_ADC)
 
-                    # validation plot for selcted evts
+                    # validation plot for selected evts
                     if iwfm < 500 and plotwfms == True:
                         xaxis = [x for x in range(len(wfset.waveforms[iwfm].adcs))]
                         plt.figure(num="raw adc")
@@ -242,30 +255,16 @@ for iwfm in range(80000):
                         plt.close()
 
 
-#Baselines_allwfms = [(x) for x in BaselineADCAllWfms]
-#plt.hist(Baselines_allwfms, range=(0,10000), bins=1000)
-#plt.xlabel('ADC')
-#plt.draw()
-#plt.savefig("./"+str(wfset.waveforms[0].run_number)+"_ch_"+str(channelsofinterest[ich])+"_baselines.pdf")
-#plt.clf() # important to clear figure
-#plt.close()
-
 if plotpersistence == True:
     for ich in range(len(channelsofinterest)):
-        plt.figure(channelsofinterest[ich])
-        plt.savefig("./persistent_big_wfms_memb_"+str(wfset.waveforms[0].run_number)+"_ch_"+str(channelsofinterest[ich])+".pdf")
+        plt.figure("bigunsaturated"+str(channelsofinterest[ich]))
+        plt.savefig("./persistent_big_unsaturated_wfms_"+str(wfset.waveforms[0].run_number)+"_cathode_ch_"+str(channelsofinterest[ich])+".pdf")
         plt.clf() # important to clear figure
         plt.close()
-
-for ich in range(len(channelsofinterest)):
-    channelofinterest = channelsofinterest[ich]
-    dt_allwfms = [(x) for x in daq_pd_dt[ich]]
-    plt.hist(dt_allwfms, range=(0,5000), bins=100, log=True)
-    plt.xlabel('|t_daq - t_pd|')
-    plt.draw()
-    plt.savefig("./dt_"+str(wfset.waveforms[0].run_number)+"_ch_"+str(channelsofinterest[ich])+"_fullDAQwindow.pdf")
-    plt.clf() # important to clear figure
-    plt.close()
+        plt.figure("supersaturated"+str(channelsofinterest[ich]))
+        plt.savefig("./persistent_super_saturated_wfms_"+str(wfset.waveforms[0].run_number)+"_cathode_ch_"+str(channelsofinterest[ich])+".pdf")
+        plt.clf() # important to clear figure
+        plt.close()
 
 print("iwfm at end: ", iwfm)
 print("run number: ", wfset.waveforms[0].run_number)
@@ -400,15 +399,17 @@ for ich in range(len(channelsofinterest)):
         # Count time over threshold in the wfm waveform
         for ithres in range(nadcthrs):
             # Loop over beam time region in the avg wfm of a specific channel
+            skip_uprise = 0
             for itick in range(checkToT_start, checkToT_end):
                 # rising edge has to be below 2000 ticks in beam wfm
                 if ( ( avg_wfm_final[itick] - ThresholdStep[ithres] ) < 0 and ( avg_wfm_final[itick+1] - ThresholdStep[ithres] ) > 0 ) and itick < 2000:
-                    # automatically pick up the latest uprise
-                    ToT_start[ithres] = itick
+                    # automatically pick up the earlist uprise
+                    if skip_uprise == 0:
+                        ToT_start[ithres] = itick
+                        skip_uprise = 1
                 if ( ( avg_wfm_final[itick] - ThresholdStep[ithres] ) > 0 and ( avg_wfm_final[itick+1] - ThresholdStep[ithres] ) < 0 ):
+                    # automatically pick up the latest downturn
                     ToT_stop[ithres] = itick
-                    # automatically pick up the earlist downturn
-                    break
 
         # report ToT for this ch
         print("ToT [ticks] for channel: ", channelsofinterest[ich])
