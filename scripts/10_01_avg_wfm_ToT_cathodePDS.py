@@ -42,12 +42,11 @@ checkToT_start = 1700
 checkToT_end = 2400
 peakadccut_max = 14000
 peakadccut_min = 8000
-beam_coincidence_cut = 20 # pd ticks
 
 filterlength = 10
 percentile4baseline = 10
 tick_2_ns = 16
-plotwfms = False
+plotwfms = True
 plotpersistence = True
 
 nadcthrs = 30 # number of ADC thresholds
@@ -66,7 +65,27 @@ for ithres in range(1, nadcthrs):
 # run 39183, 8 GeV, L - 0.1b, H - 1b, W target - exists
 #dirpath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run039183_cathode/"
 # run 39108, 5 GeV, L - 0.25bar, H - 5bar, Cu target - done
-dirpath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run039108_cathode/"
+#dirpath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run039108_cathode/"
+# run 39106, 4 GeV, L - 0.5bar, H - 8bar, Cu target - exists
+#dirpath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run039106_cathode/"
+# run 39007, 3 GeV, L - 1bar, H - 10bar, W target - exists
+#dirpath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run039007_cathode/"
+# run 39105, 2.5 GeV, L - 1.3bar, H - 10bar, W target - done
+#dirpath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run039105_cathode/"
+# run 39030, 2 GeV, L - 2bar, H - 10bar, W target - exist
+#dirpath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run039030_cathode/"
+# run 39047, 1.5 GeV, L - 4bar, H - 14bar, W target - exists
+#dirpath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run039047_cathode/"
+# run 38930, 1 GeV, L - 4.5bar, H - 14bar, W target - done
+#dirpath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run038930_cathode/"
+# run 39136, 0.7 GeV, L - 5bar, H - 8bar, Cu target - exists
+#dirpath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run039136_cathode/"
+# run 39046, 0.5 GeV, L - 5bar, H - 14bar, Cu target - exists
+#dirpath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run039046_cathode/"
+# run 39111, 0.3 GeV, L - 5bar, H - 10bar, Cu target - EXIST
+dirpath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run039111_cathode/"
+# run 39110, 0.2 GeV, L - 5bar, H - 10bar, Cu target - EXIST
+#dirpath="/eos/experiment/neutplatform/protodune/experiments/ProtoDUNE-VD/commissioning/processed/run039110_cathode/"
 
 BaselineADCAllWfms = []
 colors = ['b', 'g', 'r', 'c', 'm', 'y', 'k', 'b', 'b', 'g', 'r', 'c', 'm', 'y', 'k']
@@ -150,7 +169,7 @@ QoT              = np.zeros((nadcthrs,), dtype=np.float32)
 
 # Main loop
 #for iwfm in range(len(wfset.waveforms)):
-for iwfm in range(40000):
+for iwfm in range(31000):
 #for iwfm in range(1000):
 
         if iwfm % 10000 == 0:
@@ -197,7 +216,7 @@ for iwfm in range(40000):
                 # control plot: overlay wfms
                 if plotpersistence == True:
                     plt.figure("bigunsaturated"+str(channelofinterest))
-                    if peak_adc > peakadccut_min and peak_adc < peakadccut_max and peak_adc != peak_mode_adc: # if peak equals mode, it's saturated
+                    if abs(wfset.waveforms[iwfm].daq_window_timestamp - wfset.waveforms[iwfm].timestamp) < beamcoinstop and abs(wfset.waveforms[iwfm].daq_window_timestamp - wfset.waveforms[iwfm].timestamp) > beamcoinstart and peak_adc > peakadccut_min and peak_adc < peakadccut_max and peak_adc != peak_mode_adc: # if peak equals mode, it's saturated
                         xaxis = [x for x in range(len(bslin_subtracted_filtered_wfm[ich]))]
                         plt.plot(xaxis, bslin_subtracted_filtered_wfm[ich])
 
@@ -372,6 +391,7 @@ for ich in range(len(channelsofinterest)):
     ##################################
     ToT_final = []
     QoT_final = []
+    avg_wfm_peak_adc = 0
     for itrg in range(4):
         # Append sublists
         ToT_final.append([itrg] * 0)
@@ -392,6 +412,7 @@ for ich in range(len(channelsofinterest)):
             trgname = "OR"
 
         print("=== trg type:", trgname, " ===")
+        avg_wfm_peak_adc = np.max(avg_wfm_final[checkToT_start:checkToT_end])
 
         # For each avg wfm (baseline subtracted), project a line across any y value (ADC), integrate the lost charge (ADCxtime area above the projected line)
         # at zero projection, it equals the total charge of the wfm
@@ -416,12 +437,17 @@ for ich in range(len(channelsofinterest)):
         for ithres in range(nadcthrs):
 
             ToT[ithres] = ToT_stop[ithres] - ToT_start[ithres]
+            #print("ToT start ithres: ", ithres, ": ", ToT_start[ithres])
+            #print("ToT stop  ithres: ", ithres, ": ", ToT_stop[ithres])
+            #print("ToT ithres: ", ithres, ": ", ToT[ithres])
 
             # Calculate lost charge (integral above adc threshold) and tot charge
             QoT[ithres] = np.sum(avg_wfm_final[ToT_start[ithres]:ToT_stop[ithres]] - ThresholdStep[ithres])*tick_2_ns
+            #print("QoT ithres: ", ithres, ": ", QoT[ithres])
 
             # for threshold beyond peak adc, set zero
-            if ThresholdStep[ithres] > peak_adc:
+            #print("ThresholdStep: ", ithres, ": ", ThresholdStep[ithres], " peak adc: ", avg_wfm_peak_adc)
+            if ThresholdStep[ithres] > avg_wfm_peak_adc:
                 ToT[ithres] = 0
                 QoT[ithres] = 0
 
